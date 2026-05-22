@@ -1,0 +1,162 @@
+# Pin third-party actions to full commit SHAs for supply-chain security.
+# GitHub-owned actions (actions/*) may use version tags.
+# This workflow groups the fast, source-tree-only checks that feed SonarQube Cloud.
+name: Tests & Analysis
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+# Cancel stale analysis runs when a newer commit lands on the same PR; on
+# master the queue runs in order so master pushes are never cancelled.
+concurrency:
+  group: analysis-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@76e04a911780d5b312d89783f7b1cd627778900a # v1.4.1
+        with:
+          version: "2.4.1"
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          plugins: poetry-dynamic-versioning[plugin]
+
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-test-${{ hashFiles('**/pyproject.toml', '**/poetry.lock') }}
+
+      - name: Install dependencies
+        run: poetry install --with test --no-interaction
+
+      - name: Run unit tests
+        run: make test-unit
+
+      - name: Upload coverage for SonarQube Cloud and docs treemap
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: |
+            reports/coverage.xml
+            reports/coverage.json
+          retention-days: 14
+
+      - name: Save PR metadata
+        if: github.event_name == 'pull_request'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_REF: ${{ github.event.pull_request.head.ref }}
+          PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p reports/pr
+          printf '%s\n' "$PR_NUMBER" > reports/pr/number
+          printf '%s\n' "$PR_BASE" > reports/pr/base
+          printf '%s\n' "$PR_REF" > reports/pr/ref
+          printf '%s\n' "$PR_REPO" > reports/pr/repo
+          printf '%s\n' "$PR_SHA" > reports/pr/sha
+
+      - name: Upload PR metadata
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr
+          path: reports/pr/
+          retention-days: 1
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v5
+        with:
+          files: ./reports/coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1
+        with:
+          files: ./reports/unit.junit.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  ruff:
+    name: Ruff
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Write Ruff report
+        uses: astral-sh/ruff-action@0ce1b0bf8b818ef400413f810f8a11cdbda0034b # v4.0.0
+        with:
+          args: check --exit-zero --output-format=json --output-file=reports/ruff-report.json .
+
+      - name: Upload Ruff report
+        uses: actions/upload-artifact@v7
+        with:
+          name: ruff
+          path: reports/ruff-report.json
+          retention-days: 1
+
+  bandit:
+    name: Bandit
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install -r .github/requirements-ci.txt
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Write Bandit report
+        run: bandit -c pyproject.toml -r src/terok_util/ --exit-zero -f json -o reports/bandit-report.json
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v7
+        with:
+          name: bandit
+          path: reports/bandit-report.json
+          retention-days: 1
+
+  # The SonarQube Cloud scan runs in sonar.yml (same-repo) and sonar_pr.yml
+  # (fork PRs) — both consume the coverage/ruff/bandit artifacts uploaded
+  # above. Splitting Sonar out keeps this workflow free of third-party wait
+  # time, so downstream consumers (docs.yml, sonar.yml) unblock as soon as
+  # the local jobs finish.

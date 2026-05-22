@@ -1,0 +1,147 @@
+[build-system]
+requires = ["poetry-core>=2.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
+
+[project]
+name = "terok-util"
+description = "Shared utility library for the terok-* sibling packages"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    {name = "Jiri Vyskocil", email = "jiri@vyskocil.com"},
+]
+maintainers = [
+    {name = "Jiri Vyskocil", email = "jiri@vyskocil.com"},
+]
+keywords = ["terok", "shared", "utilities"]
+requires-python = ">=3.12,<4.0"
+dynamic = ["version", "classifiers"]
+dependencies = [
+    "platformdirs>=4.9.6",
+    "ruamel.yaml>=0.18",
+]
+
+[project.urls]
+Homepage = "https://terok.ai/"
+Repository = "https://github.com/terok-ai/terok-util"
+Documentation = "https://terok-ai.github.io/terok-util/"
+Issues = "https://github.com/terok-ai/terok-util/issues"
+Changelog = "https://github.com/terok-ai/terok-util/blob/master/CHANGELOG.md"
+Security = "https://github.com/terok-ai/terok-util/security/policy"
+
+[tool.poetry]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+
+packages = [
+  { include = "terok_util", from = "src" },
+]
+version = "0.0.0"
+
+[tool.poetry.group.dev.dependencies]
+ruff = ">=0.15.10"
+bandit = ">=1.7"
+docstr-coverage = "^2.3.2"
+complexipy = ">=5.0"
+vulture = ">=2.12"
+reuse = "^6.2.0"
+tach = "^0.35.0"
+pre-commit = ">=4.0"
+mypy = ">=2.1.0,<3.0"
+
+[tool.poetry.group.test.dependencies]
+pytest = ">=9.0.3"
+pytest-cov = ">=4.0"
+
+[tool.poetry.group.docs.dependencies]
+properdocs = ">=1.6.7"
+mkdocs-material = ">=9.0"
+mkdocstrings = {extras = ["python"], version = ">=0.24"}
+mkdocs-literate-nav = ">=0.6"
+mkdocs-section-index = ">=0.3"
+mkdocs-terok = "^0.6"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+python_files = ["test_*.py"]
+python_classes = ["Test*", "*Tests"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",      # pycodestyle errors
+  "W",      # pycodestyle warnings
+  "F",      # pyflakes
+  "I",      # isort
+  "B",      # flake8-bugbear
+  "C4",     # flake8-comprehensions
+  "UP",     # pyupgrade
+  "SIM",    # flake8-simplify
+]
+ignore = [
+  "E501",   # line too long (handled by formatter)
+  "B904",   # raise from in except
+  "SIM102", # nested if statements
+  "SIM105", # contextlib.suppress vs try/except/pass
+  "SIM108", # use ternary operator
+  "SIM117", # nested with statements
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["terok_util"]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# Static type checking — see `make typecheck`.
+[tool.mypy]
+python_version = "3.12"
+files = ["src/terok_util"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+no_implicit_optional = true
+strict_equality = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disable_error_code = ["import-untyped"]
+pretty = true
+show_error_codes = true
+
+[tool.bandit]
+exclude_dirs = ["tests", "build", "dist", ".venv", "docs"]
+# Project-wide skips:
+#   B404 — "consider possible security implications of subprocess module".
+#          We use subprocess deliberately for fixed-argv shellouts; per-call
+#          ``# nosec B603`` covers the argv-injection concern at each site.
+skips = ["B404"]
+
+[tool.poetry-dynamic-versioning]
+enable = true
+vcs = "git"
+pattern = "^v(?P<base>\\d+\\.\\d+\\.\\d+)(?:(?P<stage>a)(?P<revision>\\d+))?$"
+style = "pep440"
+
+[tool.poetry-dynamic-versioning.substitution]
+folders = [{path = "src"}]

@@ -1,0 +1,157 @@
+# Pin third-party actions to full commit SHAs for supply-chain security.
+# GitHub-owned actions (actions/*) may use version tags.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+# Cancel stale CI runs when a newer commit lands on the same PR; on
+# master the queue runs in order so master pushes are never cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+jobs:
+  reuse:
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: REUSE compliance check
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6
+
+  lint:
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Ruff lint
+        uses: astral-sh/ruff-action@0ce1b0bf8b818ef400413f810f8a11cdbda0034b # v4.0.0
+        with:
+          args: check
+
+      - name: Ruff format check
+        uses: astral-sh/ruff-action@0ce1b0bf8b818ef400413f810f8a11cdbda0034b # v4.0.0
+        with:
+          args: format --check
+
+  docstring-coverage:
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install -r .github/requirements-ci.txt
+
+      - name: Check docstring coverage
+        run: docstr-coverage src/terok_util/ --fail-under=95
+
+  dead-code:
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install -r .github/requirements-ci.txt
+
+      - name: Check for dead code
+        run: vulture src/terok_util/ vulture_whitelist.py --min-confidence 80
+
+  tach:
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install -r .github/requirements-ci.txt
+
+      - name: Check module boundaries
+        run: tach check
+
+  security:
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: pip install -r .github/requirements-ci.txt
+
+      - name: Run SAST scan
+        run: bandit -c pyproject.toml -r src/terok_util/ -ll
+
+  # Static type checking via mypy.  Installs the package + main deps so
+  # mypy can read real signatures for third-party types instead of
+  # falling back to ``Any`` (via ``ignore_missing_imports = true``).
+  typecheck:
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install project + tools
+        run: |
+          pip install -e .
+          pip install -r .github/requirements-ci.txt
+
+      - name: Run mypy
+        run: mypy src/terok_util/
+
+  readme-check:
+    if: github.repository == 'terok-ai/terok-util'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify README renders for PyPI
+        run: |
+          pip install 'readme_renderer[md]'
+          python -m readme_renderer README.md --format md

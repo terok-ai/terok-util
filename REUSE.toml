@@ -1,0 +1,27 @@
+version = 1
+
+[[annotations]]
+path = [
+  "**/*.md",
+  "**/*.yml",
+  "**/*.yaml",
+  "**/*.toml",
+  "**/*.properties",
+  "**/*.json",
+  "**/*.lock",
+  "**/*.txt",
+  "**/*.css",
+  "**/*.template",
+  "**/*.socket",
+  "**/*.service",
+  "**/*.te",
+  ".gitignore",
+  ".importlinter",
+  "MANIFEST.in",
+  "Makefile",
+  "**/py.typed",
+  "**/*.svg",
+  "**/*.d2",
+]
+SPDX-FileCopyrightText = "2026 Jiri Vyskocil"
+SPDX-License-Identifier = "Apache-2.0"

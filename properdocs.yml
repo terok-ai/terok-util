@@ -1,0 +1,102 @@
+site_name: terok-util
+site_description: Shared utility library for the terok-* sibling packages
+site_url: https://terok-ai.github.io/terok-util
+repo_url: https://github.com/terok-ai/terok-util
+repo_name: terok-ai/terok-util
+
+theme:
+  name: material
+  font:
+    text: Ubuntu
+    code: Ubuntu Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          inventories:
+            - https://docs.python.org/3/objects.inv
+            - https://raw.githubusercontent.com/terok-ai/docs-inventories/master/terok/objects.inv
+            - https://raw.githubusercontent.com/terok-ai/docs-inventories/master/terok-executor/objects.inv
+            - https://raw.githubusercontent.com/terok-ai/docs-inventories/master/terok-shield/objects.inv
+            - https://raw.githubusercontent.com/terok-ai/docs-inventories/master/terok-clearance/objects.inv
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            show_if_no_docstring: true
+            members_order: source
+            merge_init_into_class: true
+  - terok:
+      ci_map: true
+      code_metrics: true
+      code_metrics_coverage_json_path: reports/coverage.json
+      code_metrics_codecov_repo: terok-ai/terok-util
+      ref_pages: true
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Adoption Guide: adoption.md
+  - Developer Guide:
+    - Code Metrics: code-metrics.md
+    - CI Workflow Map: ci-map.md
+  - API Reference: reference/
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/terok-ai/terok-util
+
+extra_css:
+  - https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&family=Ubuntu+Mono:wght@400;700&display=swap

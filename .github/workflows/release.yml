@@ -1,0 +1,149 @@
+# Pin third-party actions to full commit SHAs for supply-chain security.
+# GitHub-owned actions (actions/*) may use version tags.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "What to publish"
+        type: choice
+        options: [pypi, testpypi, gh-only]
+        default: pypi
+
+# Empty default; each job re-grants only what it needs.
+permissions: {}
+
+# One release at a time per ref; don't cancel a publish mid-flight.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  no-git-deps:
+    uses: ./.github/workflows/no-git-deps.yml
+    permissions:
+      contents: read
+
+  build:
+    needs: no-git-deps
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0    # poetry-dynamic-versioning needs full history
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: snok/install-poetry@76e04a911780d5b312d89783f7b1cd627778900a # v1.4.1
+        with:
+          version: "2.4.1"
+          plugins: poetry-dynamic-versioning[plugin]
+
+      - name: Build distributions
+        run: poetry build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          retention-days: 90    # cover any realistic re-run window
+
+  github-release:
+    needs: build
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'gh-only')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # No triggering-actor check on github-release: tag creation is already
+      # gated by the v*.*.* tag-creation ruleset on the org (release-officers
+      # team only).  Anyone who succeeded in pushing the tag is authorised
+      # for the GH release.  The actor check stays on pypi-publish /
+      # testpypi-publish where the consequence is external publication.
+
+      # Alpha tags (vX.Y.ZaN, PEP 440 pre-release) get the GH prerelease
+      # flag; final vX.Y.Z tags do not.  Belt-and-suspenders alongside
+      # the release-chain script's `gh release create --prerelease`.
+      - name: Classify tag (final vs prerelease)
+        id: classify
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+a[0-9]+$ ]]; then
+            echo "prerelease=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2
+        with:
+          files: dist/*
+          prerelease: ${{ steps.classify.outputs.prerelease }}
+
+  pypi-publish:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'pypi'
+    runs-on: ubuntu-latest
+    environment: pypi   # OIDC subject narrowing + required-reviewer gate
+    permissions:
+      id-token: write   # OIDC for PyPI Trusted Publishing
+    steps:
+      - name: Verify triggering actor
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          if [ "$ACTOR" != "terok-warden" ]; then
+            echo "Releases must be triggered by terok-warden (got: $ACTOR)" >&2
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          attestations: true
+
+  testpypi-publish:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: pypi   # same protection as real PyPI
+    permissions:
+      id-token: write
+    steps:
+      - name: Verify triggering actor
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          if [ "$ACTOR" != "terok-warden" ]; then
+            echo "Releases must be triggered by terok-warden (got: $ACTOR)" >&2
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          attestations: true

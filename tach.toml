@@ -1,0 +1,78 @@
+exclude = [
+    "**/__pycache__",
+    "**/tests/**",
+    "build",
+    "dist",
+    ".venv",
+    "docs",
+]
+
+source_roots = ["src"]
+exact = true
+forbid_circular_dependencies = true
+ignore_type_checking_imports = true
+
+# ── Layers ─────────────────────────────────────────────────
+#
+# terok-util is the foundation of the cross-package dependency
+# chain — every module here is leaf-shaped (no internal sibling
+# deps) and reaches outside only to stdlib + the two declared
+# runtime dependencies (``platformdirs`` for XDG path resolution,
+# ``ruamel.yaml`` for the round-trip YAML loader behind
+# ``ConfigStack``).  A single ``foundation`` layer is enough; if
+# the package ever grows internal layering it gets added then.
+
+layers = ["foundation"]
+
+# Each sub-module is leaf-shaped — zero internal deps.
+
+# CLI registry types (CommandDef / ArgDef / CommandTree) shared by
+# every sibling that builds a CLI tree.
+[[modules]]
+path = "terok_util.cli_types"
+layer = "foundation"
+depends_on = []
+
+# Atomic-write helpers + filesystem invariants.
+[[modules]]
+path = "terok_util.fs"
+layer = "foundation"
+depends_on = []
+
+# Namespace path resolvers (state / config / runtime) — XDG-aware,
+# root-detection-aware.  Imports ``platformdirs``.  Lazy-depends on
+# ``config_stack`` for the ``paths.root`` override read from
+# ``config.yml`` (Podman model — namespace_state_dir honours it so an
+# operator who relocates the state tree doesn't need to export an
+# env var on every shell).
+[[modules]]
+path = "terok_util.paths"
+layer = "foundation"
+depends_on = [
+    "terok_util.config_stack",
+]
+
+# Domain-agnostic config-merge engine — ``ConfigStack`` + ``deep_merge``.
+# Imports ``ruamel.yaml`` for round-trip YAML.
+[[modules]]
+path = "terok_util.config_stack"
+layer = "foundation"
+depends_on = []
+
+# Untrusted-string sanitisation for terminal output (CWE-150).
+[[modules]]
+path = "terok_util.security"
+layer = "foundation"
+depends_on = []
+
+# ``{{VAR}}``-token template renderer with control-character validation.
+[[modules]]
+path = "terok_util.templates"
+layer = "foundation"
+depends_on = []
+
+# Rootless podman ``--userns=keep-id:uid=1000,gid=1000`` builder.
+[[modules]]
+path = "terok_util.podman"
+layer = "foundation"
+depends_on = []
