@@ -12,7 +12,7 @@ Resolution priority for each resolver:
 1. Package-specific override (``env_var`` argument)
 2. ``TEROK_ROOT`` env var (namespace-wide override; state only)
 3. Platform default (FHS root paths or XDG dirs via
-   [`platformdirs`][platformdirs])
+   ``platformdirs``)
 
 Layered config-file reading (``/etc/terok/config.yml`` →
 ``~/.config/terok/config.yml``) is a sibling-package concern — packages

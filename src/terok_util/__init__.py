@@ -5,7 +5,7 @@
 
 `terok-util` sits at the bottom of the terok dependency chain.  Every
 sibling package depends on it; it depends on nothing else in the
-ecosystem (only stdlib + [`platformdirs`][platformdirs] + ruamel.yaml).
+ecosystem (only stdlib + ``platformdirs`` + ``ruamel.yaml``).
 It collects the small set of cross-cutting helpers that would otherwise
 be duplicated — or, worse, quietly diverge — across
 [terok-shield](https://github.com/terok-ai/terok-shield),
@@ -34,9 +34,6 @@ What lives here, by module:
   [`deep_merge`][terok_util.config_stack.deep_merge]).
 * [`security`][terok_util.security] — untrusted-string TTY sanitiser
   ([`sanitize_tty`][terok_util.security.sanitize_tty]).
-* [`templates`][terok_util.templates] — strict ``{{VAR}}`` template
-  renderer that rejects control characters in substitution values
-  ([`render_template`][terok_util.templates.render_template]).
 * [`podman`][terok_util.podman] — rootless ``--userns=keep-id`` builder
   ([`podman_userns_args`][terok_util.podman.podman_userns_args]).
 
@@ -75,9 +72,6 @@ from .podman import podman_userns_args
 # ── Untrusted-string sanitisation ─────────────────────────────────
 from .security import sanitize_tty
 
-# ── Template renderer (strict / control-char rejecting) ───────────
-from .templates import render_template
-
 __all__ = [
     "ArgDef",
     "CommandDef",
@@ -94,7 +88,6 @@ __all__ = [
     "podman_userns_args",
     "read_config_section",
     "read_config_top_level",
-    "render_template",
     "sanitize_tty",
     "write_sensitive_file",
 ]

@@ -65,12 +65,6 @@ path = "terok_util.security"
 layer = "foundation"
 depends_on = []
 
-# ``{{VAR}}``-token template renderer with control-character validation.
-[[modules]]
-path = "terok_util.templates"
-layer = "foundation"
-depends_on = []
-
 # Rootless podman ``--userns=keep-id:uid=1000,gid=1000`` builder.
 [[modules]]
 path = "terok_util.podman"

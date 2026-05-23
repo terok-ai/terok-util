@@ -44,7 +44,6 @@ extracted symbol and route the import through `terok_util`.
 | `from terok_sandbox.paths import read_config_section, read_config_top_level` | `from terok_util import read_config_section, read_config_top_level` |
 | `from terok_sandbox.config_stack import ConfigStack, deep_merge` | `from terok_util import ConfigStack, deep_merge` |
 | `from terok_sandbox._util._sanitize import sanitize_tty` | `from terok_util import sanitize_tty` |
-| `from terok_sandbox._util._templates import render_template` | `from terok_util import render_template` |
 | `from terok_executor._util._podman import podman_userns_args` | `from terok_util import podman_userns_args` |
 
 ## Delete the local copy
@@ -61,11 +60,6 @@ their own context*.
   is **keyword-only**. Calls with a positional second argument fail
   loudly instead of silently reinterpreting a path string as an env
   var name. Update call sites accordingly.
-- **`render_template`** — the strict variant (control-character
-  rejection) is canonical. If your downstream previously used a
-  permissive variant, any callers that pushed control characters
-  through the template will now raise. Production callers should
-  not be affected; test fixtures occasionally need updating.
 - **`CommandDef`** — there is now one nominal type across the
   ecosystem. Packages that previously defined their own
   structurally-compatible-but-distinct `CommandDef` (e.g.
