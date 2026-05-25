@@ -55,12 +55,55 @@ _config_section_cache: dict[str, dict[str, str]] = {}
 _config_top_level_cache: dict[str, object | None] = {}
 
 
-def _is_root() -> bool:
-    """Return True if the current process is running as root."""
+def host_uid() -> int:
+    """Return the current process's UID as the initial user namespace sees it.
+
+    Inside an unprivileged user namespace (rootless ``podman`` / ``crun``
+    hook, sandboxed CI runner, ``unshare -U``), ``os.geteuid()`` returns
+    the *inner*-userns UID — typically ``0`` even when the operator
+    really ran the program as UID 1000.  Network peers (D-Bus
+    ``SO_PEERCRED``, ``AUTH EXTERNAL``) and kernel-level checks see the
+    *outer* (host) UID via the userns ``uid_map`` translation, so a
+    process that advertises its inner UID over the wire is rejected for
+    a credential mismatch.  This helper hands callers the outer UID those
+    peers expect.
+
+    The mapping comes from ``/proc/self/uid_map``.  When it is
+    unavailable (macOS, BSD, exotic chroot) or no row covers the
+    effective UID, the bare ``geteuid()`` answer is returned — correct on
+    systems without Linux user namespaces.
+    """
     try:
-        return os.geteuid() == 0
+        euid = os.geteuid()
     except AttributeError:
-        return getpass.getuser() == "root"
+        return 0 if getpass.getuser() == "root" else -1
+    try:
+        with open("/proc/self/uid_map", encoding="ascii") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) != 3:
+                    continue
+                try:
+                    inner_start, outer_start, length = (int(p) for p in parts)
+                except ValueError:
+                    continue
+                if inner_start <= euid < inner_start + length:
+                    return outer_start + (euid - inner_start)
+    except OSError:
+        pass
+    return euid
+
+
+def _is_root() -> bool:
+    """Return True only if this is *real* root in the initial user namespace.
+
+    Delegates to [`host_uid`][terok_util.paths.host_uid] — the kernel-visible
+    UID is the only honest answer to "are we root?" once user namespaces
+    enter the picture.  ``os.geteuid() == 0`` lies for rootless containers
+    (the operator's host UID 1000 maps to inner 0); ``host_uid() == 0``
+    tells the truth.
+    """
+    return host_uid() == 0
 
 
 def config_file_paths() -> list[tuple[str, Path]]:
@@ -270,6 +313,7 @@ def namespace_runtime_dir(subdir: str = "", *, env_var: str | None = None) -> Pa
 
 __all__ = [
     "config_file_paths",
+    "host_uid",
     "namespace_config_dir",
     "namespace_runtime_dir",
     "namespace_state_dir",
