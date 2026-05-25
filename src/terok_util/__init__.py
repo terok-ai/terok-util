@@ -59,6 +59,7 @@ from .fs import ensure_dir, ensure_dir_writable, write_sensitive_file
 # ── XDG-aware namespace paths + layered config readers ────────────
 from .paths import (
     config_file_paths,
+    host_uid,
     namespace_config_dir,
     namespace_runtime_dir,
     namespace_state_dir,
@@ -82,6 +83,7 @@ __all__ = [
     "ensure_dir",
     "ensure_dir_writable",
     "config_file_paths",
+    "host_uid",
     "namespace_config_dir",
     "namespace_runtime_dir",
     "namespace_state_dir",
