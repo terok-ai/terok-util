@@ -323,3 +323,118 @@ class TestNamespaceRuntimeDir:
             assert (
                 namespace_runtime_dir("sandbox") == MOCK_BASE / "state-home" / "terok" / "sandbox"
             )
+
+
+class TestIsRootNamespaceAware:
+    """``_is_root`` distinguishes real root from rootless-namespaced uid 0.
+
+    Rootless container runtimes (podman / crun) execute hook scripts
+    with the operator's host UID mapped to inner UID 0; a generic
+    ``os.geteuid() == 0`` check would misclassify them as root and
+    misroute every ``namespace_*_dir()`` to ``/var/lib/terok`` /
+    ``/run/terok`` paths the operator can't write to.
+    """
+
+    @staticmethod
+    def _redirect_uid_map(monkeypatch: pytest.MonkeyPatch, uid_map_path: Path) -> None:
+        """Redirect ``open('/proc/self/uid_map')`` to *uid_map_path*."""
+        real_open = open
+
+        def _open(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+            return real_open(
+                uid_map_path if str(path) == "/proc/self/uid_map" else path, *args, **kwargs
+            )
+
+        monkeypatch.setattr("builtins.open", _open)
+
+    def test_geteuid_nonzero_is_not_root(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Plain operator process (uid != 0 ⇒ host UID != 0) is not root."""
+        from terok_util.paths import _is_root
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("         0          0 4294967295\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        monkeypatch.setattr("os.geteuid", lambda: 1000)
+        assert _is_root() is False
+
+    def test_real_root_in_initial_namespace(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """uid 0 + uid_map shows inner 0 → outer 0 ⇒ real root."""
+        from terok_util.paths import _is_root
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("         0          0 4294967295\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        monkeypatch.setattr("os.geteuid", lambda: 0)
+        assert _is_root() is True
+
+    def test_rootless_user_namespace_is_not_root(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """uid 0 in rootless userns (inner 0 → outer 1000) ⇒ NOT root."""
+        from terok_util.paths import _is_root
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("         0       1000          1\n         1     100000      65536\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        monkeypatch.setattr("os.geteuid", lambda: 0)
+        assert _is_root() is False
+
+
+class TestHostUidNamespaceAware:
+    """``host_uid`` returns the kernel-visible (initial-userns) UID.
+
+    Wire-level peers (D-Bus ``AUTH EXTERNAL``, kernel SO_PEERCRED) see
+    the outer UID after userns translation; this helper must hand
+    callers the same number or credential checks fail.
+    """
+
+    _redirect_uid_map = staticmethod(TestIsRootNamespaceAware._redirect_uid_map)
+
+    def test_initial_namespace_returns_geteuid(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Identity uid_map (init userns) ⇒ ``host_uid`` echoes ``geteuid``."""
+        from terok_util.paths import host_uid
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("         0          0 4294967295\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        monkeypatch.setattr("os.geteuid", lambda: 1000)
+        assert host_uid() == 1000
+
+    def test_rootless_inner_zero_returns_outer(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Rootless container: inner 0 → outer 1000 ⇒ ``host_uid`` returns 1000."""
+        from terok_util.paths import host_uid
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("         0       1000          1\n         1     100000      65536\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        monkeypatch.setattr("os.geteuid", lambda: 0)
+        assert host_uid() == 1000
+
+    def test_offset_inside_range(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Inner UID inside a range ⇒ outer = outer_start + (inner − inner_start)."""
+        from terok_util.paths import host_uid
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("         0       1000          1\n         1     100000      65536\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        monkeypatch.setattr("os.geteuid", lambda: 42)
+        assert host_uid() == 100041
+
+    def test_no_uid_map_falls_back_to_geteuid(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``/proc`` unavailable ⇒ ``host_uid`` returns ``geteuid``."""
+        from terok_util.paths import host_uid
+
+        def _raise(*_a: object, **_kw: object) -> None:
+            raise OSError("no /proc here")
+
+        monkeypatch.setattr("builtins.open", _raise)
+        monkeypatch.setattr("os.geteuid", lambda: 1000)
+        assert host_uid() == 1000
