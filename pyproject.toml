@@ -17,7 +17,7 @@ keywords = ["terok", "shared", "utilities"]
 requires-python = ">=3.12,<4.0"
 dynamic = ["version", "classifiers"]
 dependencies = [
-    "platformdirs>=4.9.6",
+    "platformdirs>=4.10.0",
     "ruamel.yaml>=0.18",
 ]
 
