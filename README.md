@@ -3,7 +3,18 @@ SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 SPDX-License-Identifier: Apache-2.0
 -->
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://terok-ai.github.io/terok/terok-logo-w.svg">
+    <img src="https://terok-ai.github.io/terok/terok-logo-b.svg" alt="terok-util" width="120">
+  </picture>
+</p>
+
 # terok-util
+
+[![PyPI](https://img.shields.io/pypi/v/terok-util)](https://pypi.org/project/terok-util/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![REUSE status](https://api.reuse.software/badge/github.com/terok-ai/terok-util)](https://api.reuse.software/info/github.com/terok-ai/terok-util)
 
 Shared utility library for the [`terok-*`](https://github.com/terok-ai)
 sibling packages.
