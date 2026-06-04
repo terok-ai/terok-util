@@ -25,6 +25,10 @@ What lives here, by module:
   ([`ensure_dir`][terok_util.fs.ensure_dir],
   [`ensure_dir_writable`][terok_util.fs.ensure_dir_writable],
   [`write_sensitive_file`][terok_util.fs.write_sensitive_file]).
+* [`logging`][terok_util.logging] — soft-fail file logger
+  ([`BestEffortLogger`][terok_util.logging.BestEffortLogger]).
+* [`yaml`][terok_util.yaml] — round-trip YAML facade over ``ruamel.yaml``
+  ([`load`][terok_util.yaml.load], [`dump`][terok_util.yaml.dump]).
 * [`paths`][terok_util.paths] — XDG-aware namespace path resolution
   ([`namespace_state_dir`][terok_util.paths.namespace_state_dir],
   [`namespace_config_dir`][terok_util.paths.namespace_config_dir],
@@ -56,6 +60,9 @@ from .config_stack import ConfigStack, deep_merge
 # ── Filesystem helpers ────────────────────────────────────────────
 from .fs import ensure_dir, ensure_dir_writable, write_sensitive_file
 
+# ── Best-effort file logger ───────────────────────────────────────
+from .logging import BestEffortLogger
+
 # ── XDG-aware namespace paths + layered config readers ────────────
 from .paths import (
     config_file_paths,
@@ -73,17 +80,24 @@ from .podman import podman_userns_args
 # ── Untrusted-string sanitisation ─────────────────────────────────
 from .security import sanitize_tty
 
+# ── YAML round-trip facade ────────────────────────────────────────
+from .yaml import YAMLError, dump, load, yaml_dump, yaml_load
+
 __all__ = [
     "ArgDef",
+    "BestEffortLogger",
     "CommandDef",
     "CommandTree",
     "ConfigStack",
     "KeyRow",
+    "YAMLError",
     "deep_merge",
+    "dump",
     "ensure_dir",
     "ensure_dir_writable",
     "config_file_paths",
     "host_uid",
+    "load",
     "namespace_config_dir",
     "namespace_runtime_dir",
     "namespace_state_dir",
@@ -92,4 +106,6 @@ __all__ = [
     "read_config_top_level",
     "sanitize_tty",
     "write_sensitive_file",
+    "yaml_dump",
+    "yaml_load",
 ]
