@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # terok-util
 
 The shared utility library that sits at the bottom of the
-[`terok-*`](https://github.com/terok-ai) dependency chain.
+[`terok-*`](https://github.com/terok-ai) dependency chain — the foundation of [terok](https://terok-ai.github.io/terok/).
 
 Every terok-`*` package depends on `terok-util`. `terok-util` depends
 on nothing else in the ecosystem. The package collects cross-cutting

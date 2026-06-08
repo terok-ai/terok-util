@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://terok.ai/"
+Homepage = "https://terok-ai.github.io/terok-util/"
 Repository = "https://github.com/terok-ai/terok-util"
 Documentation = "https://terok-ai.github.io/terok-util/"
 Issues = "https://github.com/terok-ai/terok-util/issues"
@@ -62,8 +62,8 @@ pytest-cov = ">=4.0"
 
 [tool.poetry.group.docs.dependencies]
 properdocs = ">=1.6.7"
-mkdocs-material = ">=9.0"
-mkdocstrings = {extras = ["python"], version = ">=0.24"}
+mkdocs-material = ">=9.7.6"
+mkdocstrings = {extras = ["python"], version = ">=0.26"}
 mkdocs-literate-nav = ">=0.6"
 mkdocs-section-index = ">=0.3"
 mkdocs-terok = "^0.7"
