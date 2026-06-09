@@ -36,6 +36,12 @@ release scope (Tier 1 + Tier 2 per
   that lived in `terok`).
 - `podman` — `podman_userns_args`. Rootless `--userns=keep-id`
   builder.
+## v0.2.0 — Emissary, Part II
+
+Extracted host BestEffortLogger and the YAML round-trip facade, https://github.com/terok-ai/terok-util/pull/16
+
+**Full Changelog**: https://github.com/terok-ai/terok-util/compare/v0.1.0...v0.2.0
+
 ## v0.1.0 — The Emissary
 
 First public PyPi release. For historical pre-releases, see https://github.com/terok-ai/terok-util/releases.
