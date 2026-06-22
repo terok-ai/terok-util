@@ -24,7 +24,7 @@ jobs:
     if: github.repository == 'terok-ai/terok-util'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -108,7 +108,7 @@ jobs:
     if: github.repository == 'terok-ai/terok-util'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Create reports directory
@@ -131,7 +131,7 @@ jobs:
     if: github.repository == 'terok-ai/terok-util'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Python
