@@ -40,6 +40,11 @@ What lives here, by module:
   ([`sanitize_tty`][terok_util.security.sanitize_tty]).
 * [`podman`][terok_util.podman] — rootless ``--userns=keep-id`` builder
   ([`podman_userns_args`][terok_util.podman.podman_userns_args]).
+* [`matrix`][terok_util.matrix] — the shared multi-distro test-matrix
+  engine behind the ``terok-matrix`` CLI; consuming repos declare their
+  matrix in ``tests/containers/matrix.yml``
+  ([`load_config`][terok_util.matrix.config.load_config],
+  [`MatrixConfig`][terok_util.matrix.config.MatrixConfig]).
 
 The rule for what belongs here: **if two or more terok-`*` packages
 need it, it lives in terok-util.**  Single-package helpers stay in
@@ -82,6 +87,9 @@ from .security import sanitize_tty
 
 # The round-trip YAML facade is reached as the ``terok_util.yaml`` submodule
 # (``from terok_util.yaml import load, dump``) rather than flattened here.
+# The matrix engine likewise stays a submodule (``terok_util.matrix``) —
+# its consumers are the ``terok-matrix`` CLI and dev tooling, not library
+# code.
 
 __all__ = [
     "ArgDef",

@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+# Alpine (OpenRC, musl) — the non-systemd matrix slot.
+#
+# Purpose: prove the stack under test (D-Bus consumers with no podman
+# dependency) works on a host
+# with NO systemd at all — the OpenRC/runit/s6 and SLURM-job floor.
+# See terok-ai/terok#959 and #1113.
+#
+# Deliberately does NOT install systemd.  The matrix runner preflight
+# asserts systemd is absent here.  D-Bus (session bus) is installed so
+# the notification path and dbusmock fixtures can exercise the "bus
+# present" case; the headless "no bus" case is covered by unit tests.
+#
+# The musl build toolchain is required: dbus-python (pulled in by
+# python-dbusmock) has no musllinux wheel and is built from source via
+# meson against dbus-dev + glib-dev.  uv provides a fast,
+# ensurepip-independent venv; its official-image binary is static musl.
+FROM docker.io/library/alpine:3.21
+
+# Consumer-side parameters, supplied by the engine from matrix.yml:
+# EXTRA_PACKAGES appends repo-specific distro packages to the base set;
+# IMAGE_PREFIX feeds the prune-ownership label below.
+ARG EXTRA_PACKAGES=""
+ARG IMAGE_PREFIX="terok-matrix"
+
+# Ownership label: a Containerfile LABEL propagates into every
+# intermediate layer image, so the harness teardown can prune exactly
+# its own dangling generations (value = the harness IMAGE_PREFIX).
+LABEL "io.terok.matrix-test"="${IMAGE_PREFIX}"
+
+RUN apk add --no-cache \
+    dbus \
+    shadow \
+    build-base python3-dev dbus-dev glib-dev pkgconf meson libffi-dev \
+    python3 \
+    git curl ca-certificates bash \
+    $EXTRA_PACKAGES
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+RUN useradd -m -s /bin/bash testrunner
+WORKDIR /src

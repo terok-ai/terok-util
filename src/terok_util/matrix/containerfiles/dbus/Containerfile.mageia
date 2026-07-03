@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+# Mageia (systemd, glibc, rpm) — broadens rpm-distro coverage beyond
+# Fedora after a recently-reported Mageia issue.  Being glibc, the
+# stack under test is exercised full-featured.
+#
+# The dbus flavor does NOT use podman.  There is no
+# podman stack and no rootless-podman nesting here; only D-Bus (session
+# bus) plus the build toolchain dbus-python needs.
+#
+# Mageia uses systemd — this is NOT a non-systemd slot; the matrix runner
+# preflight only records the init system here.  D-Bus (session bus) is
+# installed so the notification path and dbusmock fixtures can exercise
+# the "bus present" case.
+#
+# The build toolchain is required: dbus-python (pulled in by
+# python-dbusmock) has no wheel and is built from source via meson
+# against dbus-devel + glib2-devel.
+#
+# NOTE: Mageia package names / base tag are best-effort and may need
+# adjustment on the first matrix run (dnf is available on Mageia; some
+# names differ from Fedora).
+FROM docker.io/mageia:9
+
+# Consumer-side parameters, supplied by the engine from matrix.yml:
+# EXTRA_PACKAGES appends repo-specific distro packages to the base set;
+# IMAGE_PREFIX feeds the prune-ownership label below.
+ARG EXTRA_PACKAGES=""
+ARG IMAGE_PREFIX="terok-matrix"
+
+# Ownership label: a Containerfile LABEL propagates into every
+# intermediate layer image, so the harness teardown can prune exactly
+# its own dangling generations (value = the harness IMAGE_PREFIX).
+LABEL "io.terok.matrix-test"="${IMAGE_PREFIX}"
+
+RUN dnf install -y \
+        dbus \
+        shadow-utils \
+        gcc python3-devel dbus-devel glib2-devel pkgconf meson libffi-devel \
+        python3 \
+        git curl ca-certificates bash \
+    $EXTRA_PACKAGES \
+    && dnf clean all
+
+# Mageia 9 ships Python < 3.12 — use uv to get a 3.12 interpreter (mirrors
+# the debian12 slot).
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN uv python install 3.12
+
+RUN useradd -m testrunner
+WORKDIR /src

@@ -23,6 +23,9 @@ dependencies = [
     "ruamel.yaml==0.19.1",
 ]
 
+[project.scripts]
+terok-matrix = "terok_util.matrix.cli:main"
+
 [project.urls]
 Homepage = "https://terok-ai.github.io/terok-util/"
 Repository = "https://github.com/terok-ai/terok-util"
@@ -44,6 +47,9 @@ classifiers = [
 
 packages = [
   { include = "terok_util", from = "src" },
+]
+include = [
+  { path = "src/terok_util/matrix/containerfiles/*/Containerfile.*", format = ["sdist", "wheel"] },
 ]
 version = "0.2.0"
 
