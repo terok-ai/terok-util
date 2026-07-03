@@ -17,8 +17,10 @@ keywords = ["terok", "shared", "utilities"]
 requires-python = ">=3.12,<4.0"
 dynamic = ["version", "classifiers"]
 # Dependency pins follow the policy in AGENTS.md ("Dependency Pinning &
-# pyproject.toml Hygiene").  No other comments belong in this file — a
-# comment-blind release script would carry them into a production release.
+# pyproject.toml Hygiene").  Keep the dependency tables comment-free and
+# self-documenting -- in particular, never note here why a sibling
+# terok-* package is pinned a certain way, nor any transient dev-cycle
+# state: a comment-blind release script would ship such notes.
 dependencies = [
     "platformdirs~=4.10",
     "ruamel.yaml==0.19.1",
@@ -115,7 +117,7 @@ quote-style = "double"
 indent-style = "space"
 docstring-code-format = true
 
-# Static type checking — see `make typecheck`.
+# Static type checking -- see `make typecheck`.
 [tool.mypy]
 python_version = "3.12"
 files = ["src/terok_util"]
@@ -135,7 +137,7 @@ show_error_codes = true
 [tool.bandit]
 exclude_dirs = ["tests", "build", "dist", ".venv", "docs"]
 # Project-wide skips:
-#   B404 — "consider possible security implications of subprocess module".
+#   B404 -- "consider possible security implications of subprocess module".
 #          We use subprocess deliberately for fixed-argv shellouts; per-call
 #          ``# nosec B603`` covers the argv-injection concern at each site.
 skips = ["B404"]
