@@ -86,6 +86,11 @@ def test_inner_podman_flavor_reports_and_preflights(tmp_path: Path) -> None:
     assert "rootless podman not functional" in inner
     assert "uv venv --python 3.12 .venv" in inner
     assert "poetry install --with test --with stories --no-interaction" in inner
+    # Poetry is isolated from the project venv - installing the project's
+    # deps must never replace poetry's own build machinery mid-run.
+    assert "uv tool install -q poetry" in inner
+    assert "uv pip install poetry" not in inner
+    assert '"$HOME/.poetry-venv/bin:$PATH"' in inner
 
 
 def test_inner_nix_slot_reports_python_with_its_declared_contract(tmp_path: Path) -> None:

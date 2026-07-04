@@ -191,22 +191,43 @@ def _nix_python_report(slot_name: str) -> list[str]:
 
 
 def _uv_or_venv_bootstrap() -> list[str]:
-    """Fast uv venv when the image ships uv, stdlib venv + pip otherwise."""
+    """Fast uv venv when the image ships uv, stdlib venv otherwise."""
     return [
         "if command -v uv >/dev/null 2>&1; then",
         f"    uv venv --python {PYTHON_VERSION} .venv",
-        "    . .venv/bin/activate",
-        "    uv pip install poetry",
         "else",
         f"    python{PYTHON_VERSION} -m venv .venv 2>/dev/null \\",
         "        || python3 -m venv .venv",
-        "    . .venv/bin/activate",
-        "    pip install --quiet --upgrade pip",
-        "    pip install --quiet poetry",
         "fi",
+        ". .venv/bin/activate",
         "",
         'echo "--- python version ---"',
         "python --version",
+        "",
+        *_isolated_poetry(),
+    ]
+
+
+def _isolated_poetry() -> list[str]:
+    """Install poetry into its own env, never the project venv.
+
+    The project's own dependency set can include poetry's build-isolation
+    stack (pre-commit pulls virtualenv, hence distlib/python_discovery);
+    with poetry sharing the project venv, its parallel installer replaces
+    those modules on disk while an in-flight sdist build env is importing
+    them — observed as distlib/python_discovery ModuleNotFoundError
+    mid-``poetry install`` on fast hosts.
+    """
+    return [
+        "if command -v uv >/dev/null 2>&1; then",
+        "    uv tool install -q poetry",
+        '    export PATH="$HOME/.local/bin:$PATH"',
+        "else",
+        '    python3 -m venv "$HOME/.poetry-venv"',
+        '    "$HOME/.poetry-venv/bin/pip" install --quiet --upgrade pip',
+        '    "$HOME/.poetry-venv/bin/pip" install --quiet poetry',
+        '    export PATH="$HOME/.poetry-venv/bin:$PATH"',
+        "fi",
     ]
 
 
@@ -217,8 +238,11 @@ def _plain_venv_bootstrap(python: str) -> list[str]:
         "# wrapped-Python failure mode this slot exists to exercise.",
         f"{python} -m venv .venv",
         ". .venv/bin/activate",
-        "pip install --quiet --upgrade pip",
-        "pip install --quiet poetry",
+        "",
+        f'{python} -m venv "$HOME/.poetry-venv"',
+        '"$HOME/.poetry-venv/bin/pip" install --quiet --upgrade pip',
+        '"$HOME/.poetry-venv/bin/pip" install --quiet poetry',
+        'export PATH="$HOME/.poetry-venv/bin:$PATH"',
     ]
 
 
