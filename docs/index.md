@@ -12,13 +12,15 @@ Every terok-`*` package depends on `terok-util`. `terok-util` depends
 on nothing else in the ecosystem. The package collects cross-cutting
 bits that would otherwise be duplicated (or quietly diverge) across
 the siblings: CLI registry types, filesystem invariants,
-namespace-aware XDG path resolution, the layered YAML config-merge
-engine, untrusted-string sanitisation, and a strict template renderer.
+namespace-aware XDG path resolution, layered config reading and the
+YAML config-merge engine, a best-effort file logger, podman helpers,
+untrusted-string sanitisation, and a round-trip YAML facade
+(`terok_util.yaml`).
 
 ## Where to go next
 
-- [Adoption Guide](adoption.md) — how to pick up `terok-util` in a
-  downstream package; what to replace; what to leave alone.
+- [Usage Guide](adoption.md) — how to depend on `terok-util` and what
+  to know when calling it.
 - [API Reference](reference/) — every public symbol, grouped by
   module.
 - [Code Metrics](code-metrics.md) — package-level stats (LoC,

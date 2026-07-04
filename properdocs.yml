@@ -90,7 +90,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Adoption Guide: adoption.md
+  - Usage Guide: adoption.md
   - Developer Guide:
     - Code Metrics: code-metrics.md
     - CI Workflow Map: ci-map.md
