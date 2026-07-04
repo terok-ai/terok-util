@@ -24,8 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Debian 12 ships Python 3.11 — use uv to get 3.12+
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-RUN uv python install 3.12
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
+# Install the managed interpreter to a world-readable shared dir - the
+# default (/root/.local/...) would be invisible to the test user, who
+# would silently re-download Python on every run.  ENV persists into
+# the test session, so `uv venv --python 3.12` finds it there.
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
+RUN uv python install 3.12 && chmod -R a+rX /opt/uv
 
 RUN useradd -m testrunner
 WORKDIR /src

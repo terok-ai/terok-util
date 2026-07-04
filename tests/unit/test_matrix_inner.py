@@ -36,7 +36,7 @@ def test_outer_nix_uses_python_setuid_instead_of_su(tmp_path: Path) -> None:
     """The bare nix image has no SUID su; users switch via os.setuid."""
     outer = outer_script(load_fixture(tmp_path), "nix")
 
-    assert "os.setuid(1000)" in outer
+    assert outer.index("os.setgroups([])") < outer.index("os.setuid(1000)")
     assert "su -" not in outer
     # No podman inside: the resolv.conf strip does not apply.
     assert "resolv" not in outer

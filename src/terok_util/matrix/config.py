@@ -200,7 +200,7 @@ def _parse_phases(raw: list[dict[str, Any]], where: str) -> tuple[Phase, ...]:
             pytest=section.string("pytest", default="") or None,
             scope=section.string("scope", default="") or None,
             expect_add=section.strings("expect-add", default=()),
-            tolerate_failure=bool(section.data.pop("tolerate-failure", False)),
+            tolerate_failure=section.boolean("tolerate-failure", default=False),
         )
         section.reject_leftovers()
         if bool(phase.run) == bool(phase.pytest):
@@ -245,6 +245,15 @@ class _Section:
         if not isinstance(value, list):
             raise MatrixConfigError(f"{self.where}: '{key}' must be a list")
         return tuple(str(item) for item in value)
+
+    def boolean(self, key: str, default: bool) -> bool:
+        """Pop a boolean value - a quoted "false" must not sneak in as truthy."""
+        value = self.data.pop(key, self._sentinel)
+        if value is self._sentinel:
+            return default
+        if not isinstance(value, bool):
+            raise MatrixConfigError(f"{self.where}: '{key}' must be a boolean")
+        return value
 
     def mapping(self, key: str) -> dict[str, Any]:
         """Pop a nested mapping, empty when absent."""

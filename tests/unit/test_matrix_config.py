@@ -98,6 +98,11 @@ def test_defaults_for_minimal_config(tmp_path: Path) -> None:
         ),
         ("image-prefix: t\nflavor: podman\nslots:\n  debian13:\nphases: [5]\n", "list of mappings"),
         ("[not, a, mapping]", "mapping at top level"),
+        (
+            "image-prefix: t\nflavor: podman\nslots:\n  debian13:\n"
+            'phases:\n  - name: d\n    run: [true]\n    tolerate-failure: "no"\n',
+            "must be a boolean",
+        ),
     ],
 )
 def test_bad_configs_are_rejected(tmp_path: Path, mutation: str, match: str) -> None:

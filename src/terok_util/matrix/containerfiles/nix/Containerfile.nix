@@ -78,7 +78,8 @@ RUN install -d /etc \
     && chown -R 1000:1000 /home/testrunner \
     && install -d -o 1000 -g 1000 /nix/var/nix/profiles/per-user/testrunner
 
-# No USER directive — outer ``bash -c`` in run_nix_tests runs as root
-# to do the workspace prep, then ``su - testrunner`` for the venv +
-# tests.  See the nix user drop in the matrix engine.
+# No USER directive — the outer script runs as root to do the
+# workspace prep, then drops to testrunner via Python ``os.setuid``
+# (see the nix user drop in the matrix engine; this image has no SUID
+# ``su``, per above).
 ENV PATH=/nix/var/nix/profiles/default/bin:$PATH

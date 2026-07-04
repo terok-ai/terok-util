@@ -75,7 +75,11 @@ def main(argv: list[str] | None = None) -> int:
         # World-writable: inner scripts run as the container's uid-1000
         # user and record observed versions here.
         results_dir.chmod(0o777)
-        return _run_matrix(config, targets, args, results_dir)
+        try:
+            return _run_matrix(config, targets, args, results_dir)
+        except OSError as error:
+            print(f"{RED}Error: {error}{RESET}", file=sys.stderr)
+            return 2
 
 
 # ── The matrix walk ────────────────────────────────────────────────

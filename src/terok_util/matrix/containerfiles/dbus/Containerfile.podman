@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-# Podman stable (Fedora rawhide-based) — tests unexpected env setups
+# Podman stable (tracks the latest released Fedora) — tests unexpected
+# env setups
 FROM quay.io/podman/stable:latest
 
 # Consumer-side parameters, supplied by the engine from matrix.yml:

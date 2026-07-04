@@ -127,6 +127,7 @@ def _user_drop(user: str, kind: SlotKind) -> list[str]:
     return [
         f"exec python{PYTHON_VERSION} - <<'PYEOF'",
         "import os",
+        "os.setgroups([])",
         f"os.setgid({TEST_UID})",
         f"os.setuid({TEST_UID})",
         f"os.environ.update(HOME='/home/{user}', USER='{user}', LOGNAME='{user}')",

@@ -371,6 +371,25 @@ def test_dbus_flavor_prints_no_version_strings(
     assert "==> Testing debian13\n" in out
 
 
+def test_walk_errors_are_reported_not_raised(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An OSError out of the walk (e.g. missing template) exits 2, no traceback."""
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+
+    def broken_build(*_args: Any, **_kwargs: Any) -> bool:
+        raise FileNotFoundError("containerfiles/podman/Containerfile.atari800")
+
+    monkeypatch.setattr(cli, "build_image", broken_build)
+
+    assert cli.main(_args(tmp_path)) == 2
+
+    assert "Error:" in capsys.readouterr().err
+
+
 def test_scope_flags_are_mutually_exclusive() -> None:
     """--unit-only and --integ-only cannot combine."""
     with pytest.raises(SystemExit):
