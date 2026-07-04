@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.list:
-        for name in sorted(config.slots):
+        for name in sorted(targets):
             expectation = _version_expectation(config, name)
             print(f"{name} ({expectation})" if expectation else name)
         return 0
@@ -75,9 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     _warn_keyring()
     with tempfile.TemporaryDirectory(prefix=f"{config.image_prefix}-matrix-") as scratch:
         results_dir = Path(scratch)
-        # World-writable: inner scripts run as the container's uid-1000
-        # user and record observed versions here.
-        results_dir.chmod(0o777)
+        # The container's uid-1000 user (an unknown host subuid) must write
+        # its observed-version files here, so the dir is world-writable -
+        # with the sticky bit, so other host accounts cannot replace the
+        # generated scripts podman is about to execute.
+        results_dir.chmod(0o1777)
         try:
             return _run_matrix(config, targets, args, results_dir)
         except OSError as error:

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from terok_util.matrix.catalog import SLOTS, UV_IMAGE_TAG, SlotKind
 from terok_util.matrix.runner import _run_argv, render_containerfile
 from unit.matrix_fixtures import load_fixture, minimal_yml
@@ -47,6 +49,22 @@ def test_shared_blocks_render_with_their_slot_knobs(tmp_path: Path) -> None:
     mageia = render_containerfile(mageia_config, "mageia")
     assert 'driver = "vfs"' in mageia
     assert "UV_PYTHON_INSTALL_DIR=/opt/uv/python" in mageia
+
+
+def test_missing_template_error_is_catchable_as_oserror(tmp_path: Path) -> None:
+    """TemplateNotFound must stay in the OSError family cli.main catches.
+
+    The flavor is validated at load time, so this can only happen through
+    drift (a catalog slot without a packaged template); the CLI turns
+    OSError into a friendly exit-2 - lock in that jinja2's exception
+    still qualifies.
+    """
+    from dataclasses import replace
+
+    doctored = replace(load_fixture(tmp_path), flavor="no-such-flavor")
+
+    with pytest.raises(OSError):
+        render_containerfile(doctored, "debian13")
 
 
 def test_fragment_is_appended_verbatim(tmp_path: Path) -> None:

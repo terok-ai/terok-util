@@ -49,9 +49,6 @@ classifiers = [
 packages = [
   { include = "terok_util", from = "src" },
 ]
-include = [
-  { path = "src/terok_util/matrix/containerfiles/*/Containerfile.*", format = ["sdist", "wheel"] },
-]
 version = "0.2.0"
 
 [tool.poetry.group.dev.dependencies]

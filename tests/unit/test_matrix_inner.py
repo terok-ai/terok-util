@@ -16,6 +16,9 @@ def test_outer_prepares_workspace_and_drops_to_user(tmp_path: Path) -> None:
     outer = outer_script(load_fixture(tmp_path), "debian13")
 
     assert "cp -a /src /workspace" in outer
+    # Consumer-authored phase commands may pipe; a failing early stage
+    # must fail the phase.
+    assert "set -e -o pipefail" in outer
     assert "chown -R testrunner:testrunner /workspace" in outer
     assert "PID1" in outer
     assert "grep -v '^nameserver.*%'" in outer

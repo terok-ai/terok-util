@@ -42,7 +42,7 @@ def outer_script(config: MatrixConfig, slot_name: str) -> str:
     spec = SLOTS[slot_name]
     lines = [
         "#!/bin/bash",
-        "set -e",
+        "set -e -o pipefail",
         "",
         f"cp -a {SOURCE_MOUNT} {WORKSPACE_DIR}",
         f"chown -R {spec.user}:{spec.user} {WORKSPACE_DIR}",
@@ -63,7 +63,7 @@ def outer_script(config: MatrixConfig, slot_name: str) -> str:
 def inner_script(config: MatrixConfig, slot_name: str, scope: str = "all") -> str:
     """Test-user-side flow: env contract, venv + deps, configured phases."""
     spec = SLOTS[slot_name]
-    lines = ["#!/bin/bash", "set -e", ""]
+    lines = ["#!/bin/bash", "set -e -o pipefail", ""]
     if spec.kind is SlotKind.CONTAINER:
         lines += ["export XDG_RUNTIME_DIR=/run/user/$(id -u)"]
     lines += _env_contract(config, slot_name)

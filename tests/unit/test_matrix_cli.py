@@ -57,6 +57,16 @@ def test_list_shows_slots_with_version_expectations(
     assert "nix (nix-wrapped Python)" in out
 
 
+def test_list_respects_an_explicit_selection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--list narrows to the requested slots, same as --slots-json."""
+    assert main([*_config_args(tmp_path), "--list", "alpine"]) == 0
+
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1 and out[0].startswith("alpine")
+
+
 def test_unknown_slot_is_a_usage_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A typo'd slot fails fast instead of running the wrong subset."""
     assert main([*_config_args(tmp_path), "atari800"]) == 2
