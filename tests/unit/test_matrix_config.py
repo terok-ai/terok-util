@@ -88,6 +88,16 @@ def test_defaults_for_minimal_config(tmp_path: Path) -> None:
             "unknown scope",
         ),
         ("flavor: podman\nslots:\n  debian13:\n", "missing required key 'image-prefix'"),
+        (
+            "image-prefix: t\nflavor: podman\nslots:\n  debian13:\n    extra-packages: 5\n",
+            "must be a list",
+        ),
+        (
+            "image-prefix: t\nflavor: podman\nslots:\n  debian13:\n    skip: [aarch64]\n",
+            "must be a mapping",
+        ),
+        ("image-prefix: t\nflavor: podman\nslots:\n  debian13:\nphases: [5]\n", "list of mappings"),
+        ("[not, a, mapping]", "mapping at top level"),
     ],
 )
 def test_bad_configs_are_rejected(tmp_path: Path, mutation: str, match: str) -> None:
