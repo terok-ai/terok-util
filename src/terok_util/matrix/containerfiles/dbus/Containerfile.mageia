@@ -23,16 +23,7 @@
 # names differ from Fedora).
 FROM docker.io/mageia:9
 
-# Consumer-side parameters, supplied by the engine from matrix.yml:
-# EXTRA_PACKAGES appends repo-specific distro packages to the base set;
-# IMAGE_PREFIX feeds the prune-ownership label below.
-ARG EXTRA_PACKAGES=""
-ARG IMAGE_PREFIX="terok-matrix"
-
-# Ownership label: a Containerfile LABEL propagates into every
-# intermediate layer image, so the harness teardown can prune exactly
-# its own dangling generations (value = the harness IMAGE_PREFIX).
-LABEL "io.terok.matrix-test"="${IMAGE_PREFIX}"
+{% include "_header.j2" %}
 
 RUN dnf install -y \
         dbus \
@@ -45,13 +36,7 @@ RUN dnf install -y \
 
 # Mageia 9 ships Python < 3.12 — use uv to get a 3.12 interpreter (mirrors
 # the debian12 slot).
-COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
-# Install the managed interpreter to a world-readable shared dir - the
-# default (/root/.local/...) would be invisible to the test user, who
-# would silently re-download Python on every run.  ENV persists into
-# the test session, so `uv venv --python 3.12` finds it there.
-ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
-RUN uv python install 3.12 && chmod -R a+rX /opt/uv
+{% include "_uv-python312.j2" %}
 
 RUN useradd -m testrunner
 WORKDIR /src

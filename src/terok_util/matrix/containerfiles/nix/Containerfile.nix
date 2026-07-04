@@ -13,16 +13,7 @@
 
 FROM docker.io/nixos/nix:latest
 
-# Consumer-side parameters, supplied by the engine from matrix.yml:
-# EXTRA_PACKAGES appends repo-specific distro packages to the base set;
-# IMAGE_PREFIX feeds the prune-ownership label below.
-ARG EXTRA_PACKAGES=""
-ARG IMAGE_PREFIX="terok-matrix"
-
-# Ownership label: a Containerfile LABEL propagates into every
-# intermediate layer image, so the harness teardown can prune exactly
-# its own dangling generations (value = the harness IMAGE_PREFIX).
-LABEL "io.terok.matrix-test"="${IMAGE_PREFIX}"
+{% include "_header.j2" %}
 
 # Pre-populate the system profile with what the tests need at runtime:
 # wrapped python + pip and awk.  Bash and git-minimal already ship in

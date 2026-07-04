@@ -35,6 +35,10 @@ PYTHON_VERSION = "3.12"
 # exactly this harness's dangling generations (value = the image prefix).
 OWNERSHIP_LABEL = "io.terok.matrix-test"
 
+# The uv container image the templates copy the uv binary from, pinned to
+# one minor so matrix runs stay reproducible while patches still flow.
+UV_IMAGE_TAG = "0.11"
+
 
 class SlotKind(StrEnum):
     """How a slot's test container is driven."""

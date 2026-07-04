@@ -1,0 +1,25 @@
+{#-
+SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+SPDX-License-Identifier: Apache-2.0
+-#}
+{#- Rootless podman nesting for the uid-1000 test user.
+    Knobs (set before including):
+      user_shell            extra useradd flags, e.g. ' -s /bin/bash' (musl/xbps images)
+      storage_driver        'overlay' (default) or 'vfs' (no fuse-overlayfs on the distro)
+      rootless_network_cmd  force a rootless network backend, e.g. 'slirp4netns' -#}
+# ── Rootless podman nesting setup (mirrors quay.io/podman/stable) ────
+# Subordinate UID/GID ranges MUST stay within 0-65535 so they fit inside
+# the outer rootless-podman container's user-namespace mapping.
+RUN useradd -m{{ user_shell | default('') }} testrunner \
+    && uid=$(id -u testrunner) \
+    && printf "testrunner:1:%d\ntestrunner:%d:%d\n" \
+        $((uid - 1)) $((uid + 1)) $((65535 - uid)) > /etc/subuid \
+    && cp /etc/subuid /etc/subgid \
+    && chmod 4755 /usr/bin/newuidmap /usr/bin/newgidmap \
+    && mkdir -p /etc/containers \
+    && printf '{% if storage_driver | default('overlay') == 'vfs' %}[storage]\ndriver = "vfs"\n{% else %}[storage]\ndriver = "overlay"\n\n[storage.options.overlay]\nmount_program = "/usr/bin/fuse-overlayfs"\nmountopt = "nodev,fsync=0"\n{% endif %}' \
+        > /etc/containers/storage.conf \
+    && printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n\n# Disable per-container kernel keyring — prevents keyring leak / EDQUOT\n[containers]\nkeyring = false\n{% if rootless_network_cmd | default('') %}\n# On AppArmor hosts the passt profile attaches to the container pasta by\n# pathname (profiles are not container-namespaced) and denies its netns\n# and sysctl reads (dmesg: profile="passt" DENIED); slirp4netns is\n# unaffected.\n[network]\ndefault_rootless_network_cmd = "{{ rootless_network_cmd }}"\n{% endif %}' \
+        > /etc/containers/containers.conf \
+    && mkdir -p /run/user/$uid \
+    && chown testrunner:testrunner /run/user/$uid

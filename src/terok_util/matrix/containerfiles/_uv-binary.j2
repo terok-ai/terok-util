@@ -1,0 +1,6 @@
+{#-
+SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+SPDX-License-Identifier: Apache-2.0
+-#}
+{#- The uv binary, pinned to one minor for the whole matrix (catalog.UV_IMAGE_TAG). -#}
+COPY --from=ghcr.io/astral-sh/uv:{{ uv_tag }} /uv /usr/local/bin/uv

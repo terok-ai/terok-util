@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import subprocess  # nosec B404 - fixed-argv podman shellouts
 from dataclasses import dataclass
-from importlib import resources
 from pathlib import Path
 from shutil import which
 
-from .catalog import OWNERSHIP_LABEL, RESULTS_MOUNT, SLOTS, SOURCE_MOUNT, SlotKind
+from jinja2 import Environment, PackageLoader, StrictUndefined
+
+from .catalog import OWNERSHIP_LABEL, RESULTS_MOUNT, SLOTS, SOURCE_MOUNT, UV_IMAGE_TAG, SlotKind
 from .config import MatrixConfig
 from .inner import inner_script, outer_script
 
@@ -35,19 +36,31 @@ class SlotResult:
     observed: str = "?"
 
 
+# The templates are Jinja: shared blocks (ARG/label header, uv bootstrap,
+# rootless-podman setup) live once as _*.j2 partials and are composed per
+# slot via {% include %}.  StrictUndefined turns a typo'd variable into a
+# render error instead of silently empty output.
+_TEMPLATES = Environment(
+    loader=PackageLoader("terok_util.matrix", "containerfiles"),
+    undefined=StrictUndefined,
+    trim_blocks=True,
+    lstrip_blocks=True,
+    keep_trailing_newline=True,
+    autoescape=False,  # nosec B701 - renders Containerfiles, not HTML
+)
+
+
 def render_containerfile(config: MatrixConfig, slot_name: str) -> str:
     """Shared template plus the repo's optional fragment, ready to build."""
     kind = SLOTS[slot_name].kind
     flavor = "nix" if kind is SlotKind.NIX else config.flavor
-    template = (
-        resources.files("terok_util.matrix")
-        .joinpath(f"containerfiles/{flavor}/Containerfile.{slot_name}")
-        .read_text(encoding="utf-8")
+    rendered = _TEMPLATES.get_template(f"{flavor}/Containerfile.{slot_name}").render(
+        uv_tag=UV_IMAGE_TAG
     )
     fragment = config.containers_dir / "fragments" / f"Containerfile.{slot_name}"
     if fragment.is_file():
-        template += "\n" + fragment.read_text(encoding="utf-8")
-    return template
+        rendered += "\n" + fragment.read_text(encoding="utf-8")
+    return rendered
 
 
 def build_image(

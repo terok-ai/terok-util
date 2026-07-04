@@ -1,0 +1,15 @@
+{#-
+SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+SPDX-License-Identifier: Apache-2.0
+-#}
+{#- Shared per-image preamble: consumer-side ARGs + prune-ownership label. -#}
+# Consumer-side parameters, supplied by the engine from matrix.yml:
+# EXTRA_PACKAGES appends repo-specific distro packages to the base set;
+# IMAGE_PREFIX feeds the prune-ownership label below.
+ARG EXTRA_PACKAGES=""
+ARG IMAGE_PREFIX="terok-matrix"
+
+# Ownership label: a Containerfile LABEL propagates into every
+# intermediate layer image, so the harness teardown can prune exactly
+# its own dangling generations (value = the harness IMAGE_PREFIX).
+LABEL "io.terok.matrix-test"="${IMAGE_PREFIX}"

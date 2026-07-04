@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from terok_util.matrix.catalog import SLOTS, SlotKind
+from terok_util.matrix.catalog import SLOTS, UV_IMAGE_TAG, SlotKind
 from terok_util.matrix.runner import _run_argv, render_containerfile
 from unit.matrix_fixtures import load_fixture
 
@@ -25,6 +25,7 @@ def test_every_catalog_slot_has_a_template_per_flavor(tmp_path: Path) -> None:
             rendered = render_containerfile(config, name)
             assert rendered.startswith("# SPDX-FileCopyrightText"), (flavor, name)
             assert 'LABEL "io.terok.matrix-test"="${IMAGE_PREFIX}"' in rendered, (flavor, name)
+            assert "{%" not in rendered and "{{" not in rendered, (flavor, name)
 
 
 def test_templates_take_the_extra_packages_arg(tmp_path: Path) -> None:
@@ -36,6 +37,31 @@ def test_templates_take_the_extra_packages_arg(tmp_path: Path) -> None:
         rendered = render_containerfile(config, name) if name in config.slots else None
         if rendered is not None:
             assert "$EXTRA_PACKAGES" in rendered, name
+
+
+def test_shared_blocks_render_with_their_slot_knobs(tmp_path: Path) -> None:
+    """The Jinja partials produce the per-slot variants of the shared blocks."""
+    config = load_fixture(tmp_path)
+
+    alpine = render_containerfile(config, "alpine")
+    # AppArmor pasta workaround is base behavior for the podman flavor's
+    # non-systemd slots, and musl images need an explicit bash login shell.
+    assert 'default_rootless_network_cmd = "slirp4netns"' in alpine
+    assert "useradd -m -s /bin/bash testrunner" in alpine
+    assert f"ghcr.io/astral-sh/uv:{UV_IMAGE_TAG}" in alpine
+
+    debian13 = render_containerfile(config, "debian13")
+    assert "default_rootless_network_cmd" not in debian13
+    assert 'driver = "overlay"' in debian13
+
+    mageia_config = load_fixture(
+        tmp_path / "m",
+        "image-prefix: t\nflavor: podman\nslots:\n  mageia:\n"
+        "phases:\n  - name: all\n    pytest: tests/\n",
+    )
+    mageia = render_containerfile(mageia_config, "mageia")
+    assert 'driver = "vfs"' in mageia
+    assert "UV_PYTHON_INSTALL_DIR=/opt/uv/python" in mageia
 
 
 def test_fragment_is_appended_verbatim(tmp_path: Path) -> None:
