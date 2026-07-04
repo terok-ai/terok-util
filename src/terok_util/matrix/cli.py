@@ -3,9 +3,8 @@
 
 """``terok-matrix`` — run a repo's multi-distro test matrix.
 
-The operator-facing entry point: parse the flags every historical
-``run-matrix.sh`` accepted, load the repo's ``matrix.yml``, then walk the
-selected slots — build every image first (a failed build is recorded, not
+The operator-facing entry point: load the repo's ``matrix.yml``, then
+walk the selected slots — build every image first (a failed build is recorded, not
 fatal, so one run surfaces every distro's problems), run each slot's test
 container, and close with the classic PASS/SKIP/FAIL summary and the
 dangling-layer prune.
