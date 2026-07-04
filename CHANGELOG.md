@@ -36,6 +36,12 @@ release scope (Tier 1 + Tier 2 per
   that lived in `terok`).
 - `podman` — `podman_userns_args`. Rootless `--userns=keep-id`
   builder.
+## v0.2.1 — The Celestial Temple
+
+Shared multi-distro test-matrix engine + terok-matrix CLI, https://github.com/terok-ai/terok-util/pull/31
+
+**Full Changelog**: https://github.com/terok-ai/terok-util/compare/v0.2.0...v0.2.1
+
 ## v0.2.0 — Emissary, Part II
 
 Extracted host BestEffortLogger and the YAML round-trip facade, https://github.com/terok-ai/terok-util/pull/16
