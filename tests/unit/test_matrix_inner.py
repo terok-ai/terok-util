@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from terok_util.matrix.inner import inner_script, outer_script
-from unit.matrix_fixtures import load_fixture
+from unit.matrix_fixtures import load_fixture, minimal_yml
 
 
 def test_outer_prepares_workspace_and_drops_to_user(tmp_path: Path) -> None:
@@ -88,24 +88,23 @@ def test_inner_podman_flavor_reports_and_preflights(tmp_path: Path) -> None:
     assert "poetry install --with test --with stories --no-interaction" in inner
 
 
-def test_inner_nix_slot_reports_python_and_skips_the_contract(tmp_path: Path) -> None:
-    """Nix: python-version recording, plain venv, no TEROK_MATRIX/EXPECT."""
+def test_inner_nix_slot_reports_python_with_its_declared_contract(tmp_path: Path) -> None:
+    """Nix: python-version recording, plain venv; a nix run is still a matrix
+    run, so TEROK_MATRIX is set - and the fixture's empty expect override
+    keeps the capability contract off."""
     inner = inner_script(load_fixture(tmp_path), "nix")
 
     assert "/results/nix.python-version" in inner
     assert "python3.12 -m venv .venv" in inner
-    assert "TEROK_MATRIX" not in inner
+    assert "export TEROK_MATRIX=1" in inner
     assert "TEROK_EXPECT" not in inner
+    assert "XDG_RUNTIME_DIR" not in inner
     assert "poetry install --with test --with docs --no-interaction" in inner
 
 
 def test_inner_dbus_flavor_has_no_podman_machinery(tmp_path: Path) -> None:
     """A dbus-flavor repo gets contract + venv + phases, nothing podman."""
-    config = load_fixture(
-        tmp_path,
-        "image-prefix: t\nflavor: dbus\nexpect: [dbus-daemon]\nslots:\n  debian13:\n"
-        "phases:\n  - name: all tests\n    pytest: tests/ -v\n",
-    )
+    config = load_fixture(tmp_path, minimal_yml(flavor="dbus", head="expect: [dbus-daemon]\n"))
     inner = inner_script(config, "debian13")
 
     assert "export TEROK_EXPECT=dbus-daemon" in inner

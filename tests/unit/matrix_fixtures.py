@@ -67,3 +67,24 @@ def write_config(tmp_path: Path, text: str = FULL_MATRIX_YML) -> Path:
 def load_fixture(tmp_path: Path, text: str = FULL_MATRIX_YML) -> MatrixConfig:
     """Write and load the fixture config in one step."""
     return load_config(write_config(tmp_path, text))
+
+
+def minimal_yml(
+    flavor: str = "podman",
+    slot: str = "debian13",
+    head: str = "",
+    slot_options: str = "",
+) -> str:
+    """The smallest valid matrix.yml, with hook points for one-off tweaks.
+
+    Args:
+        flavor: Containerfile family to declare.
+        slot: The single slot to declare.
+        head: Extra repo-level lines (e.g. ``"expect: [dbus-daemon]\n"``).
+        slot_options: Indented option lines under the slot.
+    """
+    return (
+        f"image-prefix: t\nflavor: {flavor}\n{head}"
+        f"slots:\n  {slot}:\n{slot_options}"
+        "phases:\n  - name: all\n    pytest: tests/ -v\n"
+    )

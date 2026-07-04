@@ -15,6 +15,9 @@ Collaborators, in reading order:
   images (expected podman versions, non-systemd slots, slot kinds);
 * [`config`][terok_util.matrix.config] — the ``matrix.yml`` schema and
   loader ([`MatrixConfig`][terok_util.matrix.config.MatrixConfig]);
+* [`contract`][terok_util.matrix.contract] — the consumer conftest's half
+  of the ``TEROK_EXPECT`` capability contract
+  ([`check_capability_contract`][terok_util.matrix.contract.check_capability_contract]);
 * [`inner`][terok_util.matrix.inner] — generates the scripts that run
   inside a slot's test container;
 * [`runner`][terok_util.matrix.runner] — host-side build/run/prune;
@@ -23,14 +26,15 @@ Collaborators, in reading order:
 
 External tooling (the superbuild TUI, CI matrix generation) should not
 shell-parse anything: load the same ``matrix.yml`` via
-[`load_config`][terok_util.matrix.config.load_config] or ask
-``terok-matrix --slots-json``.
+[`load_config`][terok_util.matrix.config.load_config] or ask the CLI
+(``terok-matrix --slots-json`` / ``--image-prefix``).
 """
 
 from __future__ import annotations
 
 from .catalog import SLOTS, SlotKind, SlotSpec
 from .config import MatrixConfig, MatrixConfigError, load_config
+from .contract import binary_on_path, check_capability_contract, tcp_reachable
 
 __all__ = [
     "SLOTS",
@@ -38,5 +42,8 @@ __all__ = [
     "MatrixConfigError",
     "SlotKind",
     "SlotSpec",
+    "binary_on_path",
+    "check_capability_contract",
     "load_config",
+    "tcp_reachable",
 ]

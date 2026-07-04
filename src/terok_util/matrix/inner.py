@@ -22,6 +22,8 @@ surfaces every failing suite.
 from __future__ import annotations
 
 from .catalog import (
+    EXPECT_ENV,
+    MATRIX_ENV,
     PYTHON_VERSION,
     RESULTS_MOUNT,
     SLOTS,
@@ -63,7 +65,8 @@ def inner_script(config: MatrixConfig, slot_name: str, scope: str = "all") -> st
     spec = SLOTS[slot_name]
     lines = ["#!/bin/bash", "set -e", ""]
     if spec.kind is SlotKind.CONTAINER:
-        lines += _container_env(config, slot_name)
+        lines += ["export XDG_RUNTIME_DIR=/run/user/$(id -u)"]
+    lines += _env_contract(config, slot_name)
     lines += ["", f"cd {WORKSPACE_DIR}", ""]
     if spec.kind is SlotKind.NIX:
         lines += _nix_python_report(slot_name) + _plain_venv_bootstrap(f"python{PYTHON_VERSION}")
@@ -139,18 +142,19 @@ def _user_drop(user: str, kind: SlotKind) -> list[str]:
 # ── Inner building blocks ──────────────────────────────────────────
 
 
-def _container_env(config: MatrixConfig, slot_name: str) -> list[str]:
-    """Runtime dir + the ``TEROK_MATRIX`` / ``TEROK_EXPECT`` contract."""
-    lines = [
-        "export XDG_RUNTIME_DIR=/run/user/$(id -u)",
-        "export TEROK_MATRIX=1",
-    ]
+def _env_contract(config: MatrixConfig, slot_name: str) -> list[str]:
+    """The ``TEROK_MATRIX`` marker and the ``TEROK_EXPECT`` contract.
+
+    Every slot kind gets these — a nix run is still a matrix run; a slot
+    that wants no contract declares ``expect: []`` in its matrix.yml.
+    """
+    lines = [f"export {MATRIX_ENV}=1"]
     expect = config.slot_expect(slot_name)
     if expect:
         lines += [
             "# Image-capability contract only: phase state (e.g. hooks) is",
             "# appended once the phase that provides it has succeeded.",
-            f"export TEROK_EXPECT={','.join(expect)}",
+            f"export {EXPECT_ENV}={','.join(expect)}",
         ]
     return lines
 
@@ -220,9 +224,9 @@ def _plain_venv_bootstrap(python: str) -> list[str]:
 
 def _poetry_install(groups: tuple[str, ...]) -> list[str]:
     """Install the repo with its configured dependency groups."""
-    withs = " ".join(f"--with {group}" for group in groups)
+    withs = (f"--with {group}" for group in groups)
     return [
-        f"poetry install {withs} --no-interaction".replace("  ", " "),
+        " ".join(["poetry install", *withs, "--no-interaction"]),
         'echo "--- deps installed ---"',
     ]
 
@@ -245,11 +249,11 @@ def _phase_walk(config: MatrixConfig, slot_name: str, scope: str) -> list[str]:
             lines += [f"{command}{suffix}" for command in phase.run]
         if phase.expect_add:
             added = ",".join(phase.expect_add)
-            grown = f"${{TEROK_EXPECT}},{added}" if expect_nonempty else added
+            grown = f"${{{EXPECT_ENV}}},{added}" if expect_nonempty else added
             lines += [
                 "# The phase above succeeded, so from here on the absence of",
                 "# what it provides would be a real breakage - the contract grows.",
-                f"export TEROK_EXPECT={grown}",
+                f"export {EXPECT_ENV}={grown}",
             ]
             expect_nonempty = True
     lines += ["", "exit $_rc"]

@@ -36,6 +36,15 @@ def test_slots_json_respects_an_explicit_selection(
     assert json.loads(capsys.readouterr().out) == ["alpine"]
 
 
+def test_image_prefix_query_prints_the_prefix(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """External tooling (superbuild TUI) reads the prefix from here, not YAML regexes."""
+    assert main([*_config_args(tmp_path), "--image-prefix"]) == 0
+
+    assert capsys.readouterr().out.strip() == "terok-fixture-test"
+
+
 def test_list_shows_slots_with_version_expectations(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

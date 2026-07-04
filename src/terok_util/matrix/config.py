@@ -16,13 +16,13 @@ not running.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from terok_util.yaml import load as yaml_load
 
-from .catalog import SLOTS
+from .catalog import FLAVORS, SLOTS
 
 
 class MatrixConfigError(ValueError):
@@ -141,9 +141,12 @@ def load_config(path: Path) -> MatrixConfig:
         raise MatrixConfigError(f"{path}: expected a YAML mapping at top level")
 
     data = _Section(dict(raw), where=str(path))
+    flavor = data.string("flavor")
+    if flavor not in FLAVORS:
+        raise MatrixConfigError(f"{path}: unknown flavor '{flavor}'; known: {list(FLAVORS)}")
     config = MatrixConfig(
         image_prefix=data.string("image-prefix"),
-        flavor=data.string("flavor"),
+        flavor=flavor,
         poetry_groups=data.strings("poetry-groups", default=("test",)),
         expect=data.strings("expect", default=()),
         slots=_parse_slots(data.mapping("slots"), where=str(path)),
@@ -215,18 +218,21 @@ def _parse_phases(raw: list[dict[str, Any]], where: str) -> tuple[Phase, ...]:
     return tuple(phases)
 
 
+#: Sentinel distinguishing "key absent" from any real YAML value.
+_MISSING = object()
+
+
 @dataclass
 class _Section:
     """One mapping being consumed key-by-key; leftovers are typos."""
 
     data: dict[str, Any]
     where: str = ""
-    _sentinel: object = field(default_factory=object, repr=False)
 
     def string(self, key: str, default: str | None = None) -> str:
         """Pop a string value; required when no default is given."""
-        value = self.data.pop(key, self._sentinel)
-        if value is self._sentinel:
+        value = self.data.pop(key, _MISSING)
+        if value is _MISSING:
             if default is None:
                 raise MatrixConfigError(f"{self.where}: missing required key '{key}'")
             return default
@@ -239,8 +245,8 @@ class _Section:
 
     def strings_or_none(self, key: str) -> tuple[str, ...] | None:
         """Pop a list-of-strings value, ``None`` when absent."""
-        value = self.data.pop(key, self._sentinel)
-        if value is self._sentinel:
+        value = self.data.pop(key, _MISSING)
+        if value is _MISSING:
             return None
         if not isinstance(value, list):
             raise MatrixConfigError(f"{self.where}: '{key}' must be a list")
@@ -248,8 +254,8 @@ class _Section:
 
     def boolean(self, key: str, default: bool) -> bool:
         """Pop a boolean value - a quoted "false" must not sneak in as truthy."""
-        value = self.data.pop(key, self._sentinel)
-        if value is self._sentinel:
+        value = self.data.pop(key, _MISSING)
+        if value is _MISSING:
             return default
         if not isinstance(value, bool):
             raise MatrixConfigError(f"{self.where}: '{key}' must be a boolean")

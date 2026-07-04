@@ -4,15 +4,4 @@
 # Ubuntu 24.04 (Noble) — podman 4.9.x, slirp4netns + pasta available
 FROM docker.io/library/ubuntu:24.04
 
-{% include "_header.j2" %}
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    podman slirp4netns passt nftables dnsmasq-base uidmap fuse-overlayfs crun \
-    python3 python3-pip python3-venv \
-    git curl ca-certificates dnsutils \
-    $EXTRA_PACKAGES \
-    && rm -rf /var/lib/apt/lists/*
-
-{% include "_rootless-podman-setup.j2" %}
-
-WORKDIR /src
+{% include "_apt-podman-slot.j2" %}

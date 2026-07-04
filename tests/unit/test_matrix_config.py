@@ -72,6 +72,7 @@ def test_defaults_for_minimal_config(tmp_path: Path) -> None:
     ("mutation", "match"),
     [
         ("image-prefix: t\nflavor: podman\nslots:\n  atari800:\n", "unknown slot"),
+        ("image-prefix: t\nflavor: podmann\nslots:\n  debian13:\n", "unknown flavor"),
         ("image-prefix: t\nflavor: podman\nslots:\n  debian13:\nbogus-key: 1\n", "unknown key"),
         (
             "image-prefix: t\nflavor: podman\nslots:\n  debian13:\nphases:\n  - name: broken\n",

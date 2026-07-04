@@ -4,15 +4,4 @@
 # Debian 13 (Trixie) — dbus + dbusmock deps, system Python 3.12+
 FROM docker.io/library/debian:trixie
 
-{% include "_header.j2" %}
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    dbus \
-    gcc python3-dev libdbus-1-dev libglib2.0-dev pkg-config meson \
-    python3 python3-venv \
-    git curl ca-certificates \
-    $EXTRA_PACKAGES \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN useradd -m testrunner
-WORKDIR /src
+{% include "_apt-dbus-slot.j2" %}

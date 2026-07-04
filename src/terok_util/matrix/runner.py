@@ -23,6 +23,8 @@ from shutil import which
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
+from terok_util.security import sanitize_tty
+
 from .catalog import OWNERSHIP_LABEL, RESULTS_MOUNT, SLOTS, SOURCE_MOUNT, UV_IMAGE_TAG, SlotKind
 from .config import MatrixConfig
 from .inner import inner_script, outer_script
@@ -175,4 +177,6 @@ def _observed_version(slot_name: str, results_dir: Path) -> str:
         recorded = (results_dir / f"{slot_name}.{stem}-version").read_text(encoding="utf-8")
     except OSError:
         return "?"
-    return recorded.strip() or "?"
+    # The file is written inside the test container - sanitize before it
+    # reaches the operator's terminal via the summary.
+    return sanitize_tty(recorded.strip()) or "?"

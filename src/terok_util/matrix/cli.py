@@ -68,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.slots_json:
         print(json.dumps(targets))
         return 0
+    if args.image_prefix:
+        print(config.image_prefix)
+        return 0
 
     _warn_keyring()
     with tempfile.TemporaryDirectory(prefix=f"{config.image_prefix}-matrix-") as scratch:
@@ -259,6 +262,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--list", action="store_true", help="list available slots")
     parser.add_argument(
         "--slots-json", action="store_true", help="print the slot list as JSON (for CI)"
+    )
+    parser.add_argument(
+        "--image-prefix",
+        action="store_true",
+        help="print the image/container name prefix (for external tooling)",
     )
     parser.add_argument(
         "--build-only", action="store_true", help="build images without running tests"

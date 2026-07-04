@@ -9,34 +9,23 @@ from pathlib import Path
 
 from terok_util.matrix.catalog import SLOTS, UV_IMAGE_TAG, SlotKind
 from terok_util.matrix.runner import _run_argv, render_containerfile
-from unit.matrix_fixtures import load_fixture
+from unit.matrix_fixtures import load_fixture, minimal_yml
 
 
 def test_every_catalog_slot_has_a_template_per_flavor(tmp_path: Path) -> None:
     """The catalog and the packaged Containerfiles must not drift apart."""
     for name, spec in SLOTS.items():
-        flavors = ("nix",) if spec.kind is SlotKind.NIX else ("podman", "dbus")
+        # The nix slot's template is flavor-independent; any declared flavor
+        # exercises it.
+        flavors = ("podman",) if spec.kind is SlotKind.NIX else ("podman", "dbus")
         for flavor in flavors:
-            config = load_fixture(
-                tmp_path / f"{name}-{flavor}",
-                f"image-prefix: t\nflavor: {flavor}\nslots:\n  {name}:\n"
-                "phases:\n  - name: all\n    pytest: tests/\n",
-            )
+            config = load_fixture(tmp_path / f"{name}-{flavor}", minimal_yml(flavor, name))
             rendered = render_containerfile(config, name)
             assert rendered.startswith("# SPDX-FileCopyrightText"), (flavor, name)
             assert 'LABEL "io.terok.matrix-test"="${IMAGE_PREFIX}"' in rendered, (flavor, name)
             assert "{%" not in rendered and "{{" not in rendered, (flavor, name)
-
-
-def test_templates_take_the_extra_packages_arg(tmp_path: Path) -> None:
-    """Every non-nix template must plumb EXTRA_PACKAGES into its install."""
-    config = load_fixture(tmp_path)
-    for name, spec in SLOTS.items():
-        if spec.kind is SlotKind.NIX:
-            continue
-        rendered = render_containerfile(config, name) if name in config.slots else None
-        if rendered is not None:
-            assert "$EXTRA_PACKAGES" in rendered, name
+            if spec.kind is not SlotKind.NIX:
+                assert "$EXTRA_PACKAGES" in rendered, (flavor, name)
 
 
 def test_shared_blocks_render_with_their_slot_knobs(tmp_path: Path) -> None:
@@ -54,11 +43,7 @@ def test_shared_blocks_render_with_their_slot_knobs(tmp_path: Path) -> None:
     assert "default_rootless_network_cmd" not in debian13
     assert 'driver = "overlay"' in debian13
 
-    mageia_config = load_fixture(
-        tmp_path / "m",
-        "image-prefix: t\nflavor: podman\nslots:\n  mageia:\n"
-        "phases:\n  - name: all\n    pytest: tests/\n",
-    )
+    mageia_config = load_fixture(tmp_path / "m", minimal_yml(slot="mageia"))
     mageia = render_containerfile(mageia_config, "mageia")
     assert 'driver = "vfs"' in mageia
     assert "UV_PYTHON_INSTALL_DIR=/opt/uv/python" in mageia
@@ -93,11 +78,7 @@ def test_run_argv_matches_the_flavor_and_kind(tmp_path: Path) -> None:
     assert "--privileged" not in nix_argv
     assert "--security-opt" in nix_argv
 
-    dbus_config = load_fixture(
-        tmp_path / "dbus",
-        "image-prefix: t\nflavor: dbus\nslots:\n  debian13:\n"
-        "phases:\n  - name: all\n    pytest: tests/\n",
-    )
+    dbus_config = load_fixture(tmp_path / "dbus", minimal_yml(flavor="dbus"))
     dbus_argv = _run_argv(dbus_config, "debian13", results)
     assert "--privileged" not in dbus_argv
     assert "--security-opt" not in dbus_argv

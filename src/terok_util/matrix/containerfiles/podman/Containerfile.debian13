@@ -4,15 +4,4 @@
 # Debian 13 (Trixie) — podman 5.4.x, pasta default
 FROM docker.io/library/debian:trixie
 
-{% include "_header.j2" %}
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    podman passt slirp4netns nftables dnsmasq-base uidmap fuse-overlayfs crun \
-    python3 python3-pip python3-venv \
-    git curl ca-certificates dnsutils \
-    $EXTRA_PACKAGES \
-    && rm -rf /var/lib/apt/lists/*
-
-{% include "_rootless-podman-setup.j2" %}
-
-WORKDIR /src
+{% include "_apt-podman-slot.j2" %}

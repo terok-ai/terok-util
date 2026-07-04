@@ -35,6 +35,14 @@ PYTHON_VERSION = "3.12"
 # exactly this harness's dangling generations (value = the image prefix).
 OWNERSHIP_LABEL = "io.terok.matrix-test"
 
+# Env vars of the in-container capability contract: MATRIX_ENV marks a
+# matrix run; EXPECT_ENV carries the comma-separated capability list.
+MATRIX_ENV = "TEROK_MATRIX"
+EXPECT_ENV = "TEROK_EXPECT"
+
+# Shared Containerfile families a matrix.yml may select.
+FLAVORS = ("podman", "dbus")
+
 # The uv container image the templates copy the uv binary from, pinned to
 # one minor so matrix runs stay reproducible while patches still flow.
 UV_IMAGE_TAG = "0.11"
@@ -53,15 +61,15 @@ class SlotSpec:
 
     Args:
         expected_podman: Distro-shipped podman version the slot is pinned
-            to; ``"latest"`` for rolling images, ``"n/a"`` when the slot
-            carries no podman expectation (the ``nix`` slot).
+            to; ``"latest"`` for rolling images (and for slot kinds that
+            never read it, like ``nix``).
         non_systemd: The runner hard-fails the slot if systemd is present —
             these slots exist to prove the systemd-free floor.
         user: Non-root user baked into the image (uid 1000).
         kind: Driving mode, see [`SlotKind`][terok_util.matrix.catalog.SlotKind].
     """
 
-    expected_podman: str
+    expected_podman: str = "latest"
     non_systemd: bool = False
     user: str = "testrunner"
     kind: SlotKind = SlotKind.CONTAINER
@@ -81,5 +89,5 @@ SLOTS: dict[str, SlotSpec] = {
     "alpine": SlotSpec(expected_podman="5.3.2", non_systemd=True),
     "void": SlotSpec(expected_podman="latest", non_systemd=True),
     "mageia": SlotSpec(expected_podman="latest"),
-    "nix": SlotSpec(expected_podman="n/a", kind=SlotKind.NIX),
+    "nix": SlotSpec(kind=SlotKind.NIX),
 }
