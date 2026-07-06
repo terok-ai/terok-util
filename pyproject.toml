@@ -55,7 +55,7 @@ version = "0.2.1"
 ruff = ">=0.15.20"
 bandit = ">=1.7"
 docstr-coverage = "^2.3.2"
-complexipy = ">=6.0.0"
+complexipy = ">=6.0.1"
 vulture = ">=2.12"
 reuse = "^6.2.0"
 tach = "^0.35.0"
@@ -72,7 +72,7 @@ mkdocs-material = ">=9.7.6"
 mkdocstrings = {extras = ["python"], version = ">=0.26"}
 mkdocs-literate-nav = ">=0.6"
 mkdocs-section-index = ">=0.3"
-mkdocs-terok = "^0.7.3"
+mkdocs-terok = "^0.7.4"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
