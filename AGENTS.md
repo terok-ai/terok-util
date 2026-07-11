@@ -7,6 +7,15 @@ stack, so keep its public API small and stable.
 Standard workflow: `make lint` / `make format` before committing;
 `make test` and `make check` before pushing.
 
+**During development, ALWAYS iterate with `make test-fast`** — it runs only
+the tests affected by your branch diff (tach impact analysis, no coverage).
+Rerunning the full suite after every edit is the single biggest time sink in
+agent dev loops — don't do it; run the full `make test` exactly once, right
+before committing. One exception: impact analysis follows the Python import
+graph only, so after changing non-Python inputs (YAML, templates, shell
+scripts) run the full `make test` — `make test-fast` would skip tests that
+are actually affected.
+
 ## Dependency Pinning & `pyproject.toml` Hygiene
 
 **Version pinning policy.** Runtime/production dependencies — those pulled in
