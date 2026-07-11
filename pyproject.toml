@@ -49,7 +49,7 @@ classifiers = [
 packages = [
   { include = "terok_util", from = "src" },
 ]
-version = "0.2.1"
+version = "0.2.2a1"
 
 [tool.poetry.group.dev.dependencies]
 ruff = ">=0.15.20"
