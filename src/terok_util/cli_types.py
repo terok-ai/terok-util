@@ -60,6 +60,17 @@ class LazyHandler:
         """Import the target on first use and invoke it."""
         return _resolve_handler(self.target)(*args, **kwargs)
 
+    def resolve(self) -> Callable[..., Any]:
+        """Import and return the underlying callable (cached).
+
+        The explicit escape hatch for code that must introspect the real
+        handler — e.g. inspect its signature to decide whether to wrap it.
+        Calling this imports the target module, so a caller that wants to
+        stay lazy should reach for it only on a path that will load the
+        handler anyway.
+        """
+        return _resolve_handler(self.target)
+
 
 @cache
 def _resolve_handler(target: str) -> Callable[..., Any]:

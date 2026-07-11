@@ -443,6 +443,10 @@ class TestLazyHandler:
     def test_resolution_is_cached(self) -> None:
         assert _resolve_handler("os.path:join") is _resolve_handler("os.path:join")
 
+    def test_resolve_returns_the_underlying_callable(self) -> None:
+        """`resolve()` hands back the real target for introspection (e.g. signatures)."""
+        assert LazyHandler("os.path:join").resolve() is os.path.join
+
     def test_wiring_a_tree_does_not_import_the_target(self, tmp_path, monkeypatch) -> None:
         """Building + wiring the tree must not import the handler module."""
         (tmp_path / "lazy_wire_target.py").write_text("calls = []\n\ndef run(*, n=0):\n    calls.append(n)\n")
