@@ -403,8 +403,19 @@ def _first_verb(argv: list[str] | None) -> str | None:
     return None
 
 
+def _resolved(node: CommandDef) -> CommandDef:
+    """Materialise a lazy node so its args/children/handler are populated.
+
+    A non-lazy node is returned unchanged.  Resolution is cached, so a
+    node spliced at several positions still shares one resolved object —
+    the identity the overlay/shortcut story leans on survives.
+    """
+    return node.resolve() if getattr(node, "source", None) else node
+
+
 def _descend(node: CommandDef, rest: tuple[str, ...]) -> CommandDef:
     """Walk further into *node* by the remaining path segments."""
+    node = _resolved(node)
     if not rest:
         return node
     head, *tail = rest
@@ -442,6 +453,7 @@ def _overlay_node(
     path: tuple[str, ...],
 ) -> CommandDef:
     """Apply override at *path* if present, recurse into children."""
+    node = _resolved(node)
     new_children = _overlay_forest(node.children, overrides, path)
     new_handler = overrides.get(path, node.handler)
     if new_handler is node.handler and new_children is node.children:
@@ -465,6 +477,7 @@ def _extend_forest(
             out.append(root)
             continue
         found = True
+        root = _resolved(root)  # a lazy target must expose its real children first
         if tail:
             new_children = _extend_forest(root.children, tuple(tail), additions, here + (head,))
             out.append(root.with_children(new_children))
@@ -480,6 +493,7 @@ def _walk_node(
     node: CommandDef, here: tuple[str, ...]
 ) -> Iterator[tuple[tuple[str, ...], CommandDef]]:
     """Depth-first yield of ``(path, node)`` for *node* and its descendants."""
+    node = _resolved(node)
     here = here + (node.name,)
     yield here, node
     for child in node.children:
@@ -496,7 +510,14 @@ def _wire_command(sub: argparse._SubParsersAction, cmd: CommandDef) -> None:
     [`terok_util.cli_types`][terok_util.cli_types].  The Protocol-
     style duck typing keeps the unification cheap; the leaves don't
     need to depend on terok-util to share the wire layer.
+
+    A [lazy node][terok_util.cli_types.CommandDef] is resolved here too,
+    so a lazy root spliced as a *child* of another tree (e.g. terok mounts
+    clearance's verbs under its ``dbus`` group) materialises when its
+    branch is wired — laziness at the top level, correctness once nested.
     """
+    if getattr(cmd, "source", None):
+        cmd = cmd.resolve()
     parser_kwargs: dict[str, Any] = {"help": cmd.help}
     epilog = getattr(cmd, "epilog", "")
     if epilog:

@@ -449,7 +449,9 @@ class TestLazyHandler:
 
     def test_wiring_a_tree_does_not_import_the_target(self, tmp_path, monkeypatch) -> None:
         """Building + wiring the tree must not import the handler module."""
-        (tmp_path / "lazy_wire_target.py").write_text("calls = []\n\ndef run(*, n=0):\n    calls.append(n)\n")
+        (tmp_path / "lazy_wire_target.py").write_text(
+            "calls = []\n\ndef run(*, n=0):\n    calls.append(n)\n"
+        )
         monkeypatch.syspath_prepend(str(tmp_path))
         assert "lazy_wire_target" not in sys.modules
 
@@ -469,7 +471,9 @@ class TestLazyHandler:
 
     def test_dispatch_runs_lazy_async_handler(self, tmp_path, monkeypatch) -> None:
         """The coroutine returned by a lazily-resolved async handler still runs."""
-        (tmp_path / "lazy_async_target.py").write_text("calls = []\n\nasync def run():\n    calls.append(1)\n")
+        (tmp_path / "lazy_async_target.py").write_text(
+            "calls = []\n\nasync def run():\n    calls.append(1)\n"
+        )
         monkeypatch.syspath_prepend(str(tmp_path))
 
         tree = CommandTree([CommandDef(name="v", handler=LazyHandler("lazy_async_target:run"))])
@@ -558,3 +562,50 @@ class TestLazyDispatch:
         import lz_disp
 
         assert lz_disp.calls == [5]
+
+
+class TestLazyComposition:
+    """Lazy nodes stay transparent to the tree-composition operations
+    (``find_at`` / ``extend_at`` / ``overlay`` / ``walk``), so a consumer
+    can splice and compose a registry it received as lazy roots."""
+
+    @staticmethod
+    def _write_group(tmp_path, module: str, group: str, child: str) -> None:
+        (tmp_path / f"{module}.py").write_text(
+            "from terok_util.cli_types import CommandDef\n"
+            f"GROUP = CommandDef(name={group!r}, help='g', "
+            f"children=(CommandDef(name={child!r}, help='c', handler=lambda: None),))\n"
+        )
+
+    def test_extend_at_resolves_a_lazy_target(self, tmp_path, monkeypatch) -> None:
+        """Appending under a lazy root keeps its real children (the executor case)."""
+        self._write_group(tmp_path, "lz_ext", "vault", "status")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        tree = CommandTree([CommandDef(name="vault", help="vh", source="lz_ext:GROUP")])
+        extended = tree.extend_at(
+            ("vault",), [CommandDef(name="serve", help="sv", handler=lambda: None)]
+        )
+        names = [c.name for c in extended.find_at(("vault",)).children]
+        assert names == ["status", "serve"]  # real child preserved, addition appended
+
+    def test_find_at_descends_through_a_lazy_node(self, tmp_path, monkeypatch) -> None:
+        self._write_group(tmp_path, "lz_find", "vault", "status")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        tree = CommandTree([CommandDef(name="vault", help="vh", source="lz_find:GROUP")])
+        assert tree.find_at(("vault", "status")).name == "status"
+
+    def test_nested_lazy_child_wires_in_full(self, tmp_path, monkeypatch) -> None:
+        """A lazy root spliced as a child materialises when its branch is wired."""
+        (tmp_path / "lz_child.py").write_text(
+            "from terok_util.cli_types import ArgDef, CommandDef\n"
+            "VERB = CommandDef(name='notify', help='n', "
+            "args=(ArgDef(name='message'),), handler=lambda **k: None)\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        lazy_child = CommandDef(name="notify", help="n", source="lz_child:VERB")
+        group = CommandDef(name="dbus", help="d", children=(lazy_child,))
+        parser = argparse.ArgumentParser()
+        CommandTree([group]).wire(parser)  # eager wire of the whole tree
+        # The nested lazy child's positional arg parses — proof it materialised.
+        args = parser.parse_args(["dbus", "notify", "hello"])
+        assert args.message == "hello"
