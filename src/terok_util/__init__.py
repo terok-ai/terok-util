@@ -57,7 +57,7 @@ without notice.
 from __future__ import annotations
 
 # ── CLI registry types ────────────────────────────────────────────
-from .cli_types import ArgDef, CommandDef, CommandTree, KeyRow
+from .cli_types import ArgDef, CommandDef, CommandTree, KeyRow, LazyHandler
 
 # ── Config-stack engine ───────────────────────────────────────────
 from .config_stack import ConfigStack, deep_merge
@@ -98,6 +98,7 @@ __all__ = [
     "CommandTree",
     "ConfigStack",
     "KeyRow",
+    "LazyHandler",
     "deep_merge",
     "ensure_dir",
     "ensure_dir_writable",

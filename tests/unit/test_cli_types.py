@@ -6,10 +6,19 @@
 from __future__ import annotations
 
 import argparse
+import os.path
+import sys
 
 import pytest
 
-from terok_util.cli_types import ArgDef, CommandDef, CommandTree, KeyRow
+from terok_util.cli_types import (
+    ArgDef,
+    CommandDef,
+    CommandTree,
+    KeyRow,
+    LazyHandler,
+    _resolve_handler,
+)
 
 
 def _leaf(name: str, handler=None) -> CommandDef:
@@ -405,3 +414,64 @@ class TestKeyRow:
         scope, comment, _, _, _, _ = row
         assert (scope, comment) == ("s", "c")
         assert row.scope == "s"
+
+
+class TestLazyHandler:
+    """A [`LazyHandler`][terok_util.cli_types.LazyHandler] imports its target
+    only when called, never at tree-build time — and stays transparent to
+    dispatch (sync and async alike)."""
+
+    def test_construction_does_not_import(self) -> None:
+        """Constructing over a missing module must not raise — only calling does."""
+        handler = LazyHandler("terok_util._no_such_module_xyz:fn")
+        with pytest.raises(ModuleNotFoundError):
+            handler()
+
+    def test_resolves_and_invokes_positionally(self) -> None:
+        assert LazyHandler("os.path:join")("a", "b") == os.path.join("a", "b")
+
+    def test_dotted_qualname_walks_attributes(self) -> None:
+        """A dotted qualname resolves nested attributes on the imported module."""
+        import collections
+
+        assert _resolve_handler("collections:abc.Mapping") is collections.abc.Mapping
+
+    def test_missing_separator_raises(self) -> None:
+        with pytest.raises(ValueError, match="module:qualname"):
+            LazyHandler("no_colon_here")()
+
+    def test_resolution_is_cached(self) -> None:
+        assert _resolve_handler("os.path:join") is _resolve_handler("os.path:join")
+
+    def test_wiring_a_tree_does_not_import_the_target(self, tmp_path, monkeypatch) -> None:
+        """Building + wiring the tree must not import the handler module."""
+        (tmp_path / "lazy_wire_target.py").write_text("calls = []\n\ndef run(*, n=0):\n    calls.append(n)\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        assert "lazy_wire_target" not in sys.modules
+
+        cmd = CommandDef(
+            name="v",
+            handler=LazyHandler("lazy_wire_target:run"),
+            args=(ArgDef(name="--n", type=int, default=0),),
+        )
+        parser = argparse.ArgumentParser()
+        CommandTree([cmd]).wire(parser)
+        assert "lazy_wire_target" not in sys.modules  # still cold after wiring
+
+        CommandTree.dispatch(parser.parse_args(["v", "--n", "3"]))
+        import lazy_wire_target
+
+        assert lazy_wire_target.calls == [3]  # imported + invoked at dispatch
+
+    def test_dispatch_runs_lazy_async_handler(self, tmp_path, monkeypatch) -> None:
+        """The coroutine returned by a lazily-resolved async handler still runs."""
+        (tmp_path / "lazy_async_target.py").write_text("calls = []\n\nasync def run():\n    calls.append(1)\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+
+        tree = CommandTree([CommandDef(name="v", handler=LazyHandler("lazy_async_target:run"))])
+        parser = argparse.ArgumentParser()
+        tree.wire(parser)
+        CommandTree.dispatch(parser.parse_args(["v"]))
+        import lazy_async_target
+
+        assert lazy_async_target.calls == [1]

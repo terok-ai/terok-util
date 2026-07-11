@@ -20,10 +20,57 @@ for composition + argparse wiring.
 from __future__ import annotations
 
 import argparse
+import importlib
 import inspect
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from functools import cache
 from typing import Any, NamedTuple
+
+
+@dataclass(frozen=True)
+class LazyHandler:
+    """A command handler that imports its target on first call.
+
+    Registries wire ``handler=LazyHandler("pkg.module:function")`` instead
+    of importing the function eagerly, so *building* a
+    [`CommandTree`][terok_util.cli_types.CommandTree] pulls in none of the
+    handler modules — only
+    [`dispatch`][terok_util.cli_types.CommandTree.dispatch] of an
+    actually-selected verb imports the one module it needs.  For a CLI with
+    a dozen subsystems (vault, gate, shield, …) that turns a full-forest
+    import into a single-leaf one, which is the whole cost of starting the
+    process for a single command.
+
+    The wrapper is an opaque [`Callable`][collections.abc.Callable]:
+    [`wire`][terok_util.cli_types.CommandTree.wire],
+    [`overlay`][terok_util.cli_types.CommandTree.overlay], and dispatch
+    treat it exactly like a plain function, and dispatch detects coroutines
+    from the *return value*, so async handlers work unchanged.  Resolution
+    is process-cached, so repeated dispatch pays the import once.
+
+    Attributes:
+        target: A ``"module.path:qualname"`` string.  ``qualname`` may be
+            dotted to reach a nested attribute (e.g. a classmethod).
+    """
+
+    target: str
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Import the target on first use and invoke it."""
+        return _resolve_handler(self.target)(*args, **kwargs)
+
+
+@cache
+def _resolve_handler(target: str) -> Callable[..., Any]:
+    """Import and return the ``"module:qualname"`` *target* callable."""
+    module_path, sep, qualname = target.partition(":")
+    if not sep or not qualname:
+        raise ValueError(f"LazyHandler target {target!r} must be 'module:qualname'")
+    obj: Any = importlib.import_module(module_path)
+    for part in qualname.split("."):
+        obj = getattr(obj, part)
+    return obj
 
 
 @dataclass(frozen=True)
@@ -405,4 +452,4 @@ def _wire_command(sub: argparse._SubParsersAction, cmd: CommandDef) -> None:
         parser.set_defaults(_cmd=cmd)
 
 
-__all__ = ["ArgDef", "CommandDef", "CommandTree", "KeyRow"]
+__all__ = ["ArgDef", "CommandDef", "CommandTree", "KeyRow", "LazyHandler"]
