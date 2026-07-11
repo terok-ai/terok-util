@@ -26,7 +26,7 @@ import os
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cache
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 
 @dataclass(frozen=True)
@@ -164,7 +164,7 @@ class CommandDef:
         """
         if self.source is None:
             return self
-        return _resolve_handler(self.source)
+        return cast("CommandDef", _resolve_handler(self.source))
 
     def with_handler(self, handler: Callable[..., Any]) -> CommandDef:
         """Return a copy with ``handler`` replaced — pure leaf-rewrap."""
