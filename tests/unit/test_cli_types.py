@@ -479,3 +479,82 @@ class TestLazyHandler:
         import lazy_async_target
 
         assert lazy_async_target.calls == [1]
+
+
+class TestLazyDispatch:
+    """A lazy root ([`CommandDef.source`][terok_util.cli_types.CommandDef])
+    resolves to its real definition only when the verb is invoked, so a
+    multi-subsystem CLI imports one verb's module per run."""
+
+    @staticmethod
+    def _write_verb(tmp_path, module: str, verb: str, body: str = "") -> None:
+        """Write a throwaway module exposing ``VERB`` — a CommandDef named *verb*."""
+        (tmp_path / f"{module}.py").write_text(
+            "from terok_util.cli_types import ArgDef, CommandDef\n"
+            f"{body}"
+            f"VERB = CommandDef(name={verb!r}, help={verb + ' help'!r}, handler=lambda: None)\n"
+        )
+
+    def test_lazy_flag_and_resolve(self, tmp_path, monkeypatch) -> None:
+        self._write_verb(tmp_path, "lz_resolve", "v")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        lazy = CommandDef(name="v", help="v help", source="lz_resolve:VERB")
+        assert lazy.is_lazy is True
+        assert lazy.resolve().name == "v" and lazy.resolve().source is None
+
+    def test_wire_loads_only_the_invoked_verb(self, tmp_path, monkeypatch) -> None:
+        self._write_verb(tmp_path, "lz_a", "a")
+        self._write_verb(tmp_path, "lz_b", "b")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        tree = CommandTree(
+            [
+                CommandDef(name="a", help="ah", source="lz_a:VERB"),
+                CommandDef(name="b", help="bh", source="lz_b:VERB"),
+            ]
+        )
+        assert "lz_a" not in sys.modules and "lz_b" not in sys.modules
+        tree.wire(argparse.ArgumentParser(), argv=["a", "--flag"])
+        assert "lz_a" in sys.modules  # the invoked verb resolved
+        assert "lz_b" not in sys.modules  # its sibling stayed a placeholder
+
+    def test_help_lists_placeholders_without_loading(self, tmp_path, monkeypatch) -> None:
+        self._write_verb(tmp_path, "lz_help", "h1")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        tree = CommandTree([CommandDef(name="h1", help="h1 help", source="lz_help:VERB")])
+        parser = argparse.ArgumentParser()
+        tree.wire(parser, argv=["--help"])
+        assert "lz_help" not in sys.modules  # nothing resolved for a bare --help
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--help"])  # argparse still lists the placeholder
+
+    def test_completion_env_forces_full_tree(self, tmp_path, monkeypatch) -> None:
+        self._write_verb(tmp_path, "lz_comp", "c1")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.setenv("_ARGCOMPLETE", "1")
+        tree = CommandTree([CommandDef(name="c1", help="ch", source="lz_comp:VERB")])
+        tree.wire(argparse.ArgumentParser(), argv=["c1"])
+        assert "lz_comp" in sys.modules  # completion needs the whole surface
+
+    def test_argv_none_wires_everything(self, tmp_path, monkeypatch) -> None:
+        self._write_verb(tmp_path, "lz_eager", "e1")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        tree = CommandTree([CommandDef(name="e1", help="eh", source="lz_eager:VERB")])
+        tree.wire(argparse.ArgumentParser())  # no argv → back-compat full wire
+        assert "lz_eager" in sys.modules
+
+    def test_dispatch_through_a_lazy_root(self, tmp_path, monkeypatch) -> None:
+        (tmp_path / "lz_disp.py").write_text(
+            "from terok_util.cli_types import ArgDef, CommandDef\n"
+            "calls = []\n"
+            "def run(*, n=0):\n    calls.append(n)\n"
+            "VERB = CommandDef(name='d1', help='dh', "
+            "args=(ArgDef(name='--n', type=int, default=0),), handler=run)\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        tree = CommandTree([CommandDef(name="d1", help="dh", source="lz_disp:VERB")])
+        parser = argparse.ArgumentParser()
+        tree.wire(parser, argv=["d1", "--n", "5"])
+        CommandTree.dispatch(parser.parse_args(["d1", "--n", "5"]))
+        import lz_disp
+
+        assert lz_disp.calls == [5]

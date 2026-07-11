@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import inspect
+import os
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cache
@@ -115,6 +116,15 @@ class CommandDef:
         extras: Bag of package-specific metadata downstream consumers
             ignore (shield's ``needs_container`` / ``standalone_only``
             would live here on a unified shape).
+        source: When set, this node is a **lazy reference** — only
+            ``name`` and ``help`` are populated (enough to render the
+            top-level ``--help`` listing), and ``source`` is a
+            ``"module:qualname"`` dotted path resolving to the fully
+            populated [`CommandDef`][terok_util.cli_types.CommandDef] for
+            this verb.  [`CommandTree.wire`][terok_util.cli_types.CommandTree.wire]
+            resolves it (importing the module) only when the verb is the
+            one actually invoked, so a multi-subsystem CLI imports one
+            verb's module per run instead of all of them.
 
     A frozen-dataclass + structural sharing is the load-bearing part
     of the wrap-once-share-everywhere story: when a consumer overlays
@@ -132,11 +142,29 @@ class CommandDef:
     group: str = ""
     epilog: str = ""
     extras: Mapping[str, Any] = field(default_factory=dict)
+    source: str | None = None
 
     @property
     def is_group(self) -> bool:
         """Whether this node carries children (i.e. is a verb group)."""
         return bool(self.children)
+
+    @property
+    def is_lazy(self) -> bool:
+        """Whether this node defers to a [`source`][terok_util.cli_types.CommandDef] module."""
+        return self.source is not None
+
+    def resolve(self) -> CommandDef:
+        """Return the fully-populated node — importing ``source`` on first use.
+
+        A non-lazy node is its own resolution.  A lazy one imports its
+        ``"module:qualname"`` target (cached) and returns the real
+        [`CommandDef`][terok_util.cli_types.CommandDef] it names, so the
+        verb's module — and only that verb's module — is loaded.
+        """
+        if self.source is None:
+            return self
+        return _resolve_handler(self.source)
 
     def with_handler(self, handler: Callable[..., Any]) -> CommandDef:
         """Return a copy with ``handler`` replaced — pure leaf-rewrap."""
@@ -254,7 +282,12 @@ class CommandTree:
         for root in self._roots:
             yield from _walk_node(root, ())
 
-    def wire(self, target: argparse.ArgumentParser | argparse._SubParsersAction) -> None:
+    def wire(
+        self,
+        target: argparse.ArgumentParser | argparse._SubParsersAction,
+        *,
+        argv: list[str] | None = None,
+    ) -> None:
         """Wire this tree's verbs as subparsers under *target*, recursively.
 
         *target* may be either an
@@ -268,6 +301,18 @@ class CommandTree:
         the same root parser without colliding on argparse's
         one-subparsers-per-parser rule.
 
+        **Lazy dispatch:** pass *argv* (the process args) to load only the
+        invoked verb's module.  A [lazy root][terok_util.cli_types.CommandDef]
+        (one with ``source`` set) that isn't the invoked verb is wired as a
+        name-and-help *placeholder* — enough for the top-level ``--help``
+        listing — while the one verb the user actually typed is
+        [resolved][terok_util.cli_types.CommandDef.resolve] and wired in
+        full.  The whole tree is still materialised for shell completion
+        (``_ARGCOMPLETE`` in the environment), for a bare/``--help``
+        invocation with no verb, and for an unrecognised leading token (so
+        argparse can error against the full choice list).  Omit *argv*
+        (the default) to wire everything eagerly, unchanged.
+
         The same [`CommandDef`][terok_util.cli_types.CommandDef]
         wired at multiple positions (deep nesting + shortcuts) yields
         independent argparse subparser instances, but each subparser's
@@ -279,8 +324,21 @@ class CommandTree:
             sub = target
         else:
             sub = target.add_subparsers()
+        # ``source`` is read via getattr so slimmer foreign CommandDef shapes
+        # (shield / clearance define their own dataclasses) wire through the
+        # same path — they simply never look lazy.
+        lazy_names = {cmd.name for cmd in self._roots if getattr(cmd, "source", None)}
+        verb = _first_verb(argv) if argv is not None else None
+        wire_everything = (
+            argv is None
+            or "_ARGCOMPLETE" in os.environ
+            or (verb is not None and verb not in lazy_names)
+        )
         for cmd in self._roots:
-            _wire_command(sub, cmd)
+            if getattr(cmd, "source", None) and not wire_everything and cmd.name != verb:
+                sub.add_parser(cmd.name, help=cmd.help)  # placeholder for --help listing
+            else:
+                _wire_command(sub, cmd.resolve() if getattr(cmd, "source", None) else cmd)
 
     @staticmethod
     def dispatch(args: argparse.Namespace) -> None:
@@ -328,6 +386,21 @@ def _arg_dest(arg: ArgDef) -> str:
     names = arg.name.split("/")
     canonical = max(names, key=len)
     return canonical.lstrip("-").replace("-", "_")
+
+
+def _first_verb(argv: list[str] | None) -> str | None:
+    """Return the first non-option token in *argv* — the top-level verb.
+
+    Options (``-v``, ``--config``) are skipped so ``terok --version`` has
+    no verb.  This is a heuristic: an option that consumes a following
+    value (``--config X verb``) would surface ``X``, but the caller
+    treats an unrecognised leading token as "wire everything", so a wrong
+    guess costs laziness, never correctness.
+    """
+    for token in argv or ():
+        if not token.startswith("-"):
+            return token
+    return None
 
 
 def _descend(node: CommandDef, rest: tuple[str, ...]) -> CommandDef:
