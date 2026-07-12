@@ -52,9 +52,13 @@ permissions:
 
 # The package dir is needed as a step-level value in several jobs; each
 # job derives it identically so the jobs stay independent (no needs
-# chain serialising a fan-out of two-second checks).
+# chain serialising a fan-out of two-second checks).  Inputs and event
+# values reach the shell via env, never template interpolation — a
+# workflow input must not be able to rewrite a run script.
 env:
   PKG_DIR_INPUT: ${{ inputs.package-dir }}
+  REPO_NAME: ${{ github.event.repository.name }}
+  DOCSTRINGS_FAIL_UNDER: ${{ inputs.docstrings-fail-under }}
 
 jobs:
   reuse:
@@ -110,8 +114,8 @@ jobs:
 
       - name: Check docstring coverage
         run: |
-          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "${{ github.event.repository.name }}" | tr - _)}"
-          uv run --no-sync docstr-coverage "$PKG_DIR/" --fail-under=${{ inputs.docstrings-fail-under }}
+          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "$REPO_NAME" | tr - _)}"
+          uv run --no-sync docstr-coverage "$PKG_DIR/" --fail-under="$DOCSTRINGS_FAIL_UNDER"
 
   dead-code:
     if: github.repository_owner == 'terok-ai' && inputs.run-deadcode
@@ -137,7 +141,7 @@ jobs:
       # rides along when the repo ships one.
       - name: Check for dead code
         run: |
-          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "${{ github.event.repository.name }}" | tr - _)}"
+          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "$REPO_NAME" | tr - _)}"
           WHITELIST=""
           [ -f vulture_whitelist.py ] && WHITELIST="vulture_whitelist.py"
           uv run --no-sync vulture "$PKG_DIR/" $WHITELIST --min-confidence 80
@@ -189,7 +193,7 @@ jobs:
       # bandit errors out when pointed at a config-less pyproject.
       - name: Run SAST scan
         run: |
-          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "${{ github.event.repository.name }}" | tr - _)}"
+          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "$REPO_NAME" | tr - _)}"
           CONFIG=""
           grep -q '^\[tool\.bandit' pyproject.toml && CONFIG="-c pyproject.toml"
           uv run --no-sync bandit $CONFIG -r "$PKG_DIR/" -ll
@@ -219,7 +223,7 @@ jobs:
 
       - name: Run mypy
         run: |
-          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "${{ github.event.repository.name }}" | tr - _)}"
+          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "$REPO_NAME" | tr - _)}"
           uv run --no-sync mypy "$PKG_DIR/"
 
   readme-check:
