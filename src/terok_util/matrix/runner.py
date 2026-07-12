@@ -17,6 +17,7 @@ and the test run are long and live); all narration around it belongs to
 from __future__ import annotations
 
 import subprocess  # nosec B404 - fixed-argv podman shellouts
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
@@ -25,7 +26,15 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from terok_util.security import sanitize_tty
 
-from .catalog import OWNERSHIP_LABEL, RESULTS_MOUNT, SLOTS, SOURCE_MOUNT, UV_IMAGE_TAG, SlotKind
+from .catalog import (
+    OWNERSHIP_LABEL,
+    RESULTS_MOUNT,
+    SLOTS,
+    SOURCE_MOUNT,
+    UV_IMAGE_TAG,
+    UV_MANAGED_PYTHON_DIR,
+    SlotKind,
+)
 from .config import MatrixConfig
 from .inner import inner_script, outer_script
 
@@ -57,7 +66,8 @@ def render_containerfile(config: MatrixConfig, slot_name: str) -> str:
     kind = SLOTS[slot_name].kind
     flavor = "nix" if kind is SlotKind.NIX else config.flavor
     rendered = _TEMPLATES.get_template(f"{flavor}/Containerfile.{slot_name}").render(
-        uv_tag=UV_IMAGE_TAG
+        uv_tag=UV_IMAGE_TAG,
+        uv_python_dir=UV_MANAGED_PYTHON_DIR,
     )
     fragment = config.containers_dir / "fragments" / f"Containerfile.{slot_name}"
     if fragment.is_file():
@@ -89,13 +99,33 @@ def build_image(
 
 
 def run_slot(
-    config: MatrixConfig, slot_name: str, results_dir: Path, scope: str = "all"
+    config: MatrixConfig,
+    slot_name: str,
+    results_dir: Path,
+    scope: str = "all",
+    line_prefix: str | None = None,
 ) -> SlotResult:
-    """Run one slot's test container and collect its observed version."""
+    """Run one slot's test container and collect its observed version.
+
+    With *line_prefix*, the container's combined output streams through
+    this process line by line, each line tagged with the prefix — live
+    and attributable when several slots run concurrently.  Each tagged
+    line is emitted as a single ``write`` call so concurrent slots can
+    interleave only between lines, never inside one.
+    """
     _write_scripts(config, slot_name, results_dir, scope)
-    status = subprocess.run(  # nosec B603
-        _run_argv(config, slot_name, results_dir), check=False
-    ).returncode
+    argv = _run_argv(config, slot_name, results_dir)
+    if line_prefix is None:
+        status = subprocess.run(argv, check=False).returncode  # nosec B603
+    else:
+        with subprocess.Popen(  # nosec B603
+            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+        ) as proc:
+            assert proc.stdout is not None  # nosec B101 — guaranteed by stdout=PIPE
+            for line in proc.stdout:
+                sys.stdout.write(f"{line_prefix}{line}")
+                sys.stdout.flush()
+            status = proc.wait()
     return SlotResult(passed=status == 0, observed=_observed_version(slot_name, results_dir))
 
 

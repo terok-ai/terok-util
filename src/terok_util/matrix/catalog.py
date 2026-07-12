@@ -47,6 +47,14 @@ FLAVORS = ("podman", "dbus")
 # one minor so matrix runs stay reproducible while patches still flow.
 UV_IMAGE_TAG = "0.11"
 
+# Shared home of the image-provisioned uv-managed interpreter (see the
+# ``_uv-python312.j2`` fragment).  Baked in at build time for distros
+# whose system Python is too old; the inner script re-exports it because
+# ``su - <test user>`` wipes container ENV — without the re-export uv
+# cannot see the provisioned interpreter and either re-downloads it per
+# run (poetry mode) or fails outright (uv mode, downloads pinned off).
+UV_MANAGED_PYTHON_DIR = "/opt/uv/python"
+
 
 class SlotKind(StrEnum):
     """How a slot's test container is driven."""

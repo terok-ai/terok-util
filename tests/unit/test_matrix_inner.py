@@ -118,3 +118,49 @@ def test_inner_dbus_flavor_has_no_podman_machinery(tmp_path: Path) -> None:
     assert "export TEROK_EXPECT=dbus-daemon" in inner
     assert "podman" not in inner
     assert "resolv" not in outer_script(config, "debian13")
+
+
+def test_inner_uv_repo_syncs_with_uv_and_runs_bare_pytest(tmp_path: Path) -> None:
+    """A repo shipping uv.lock installs via uv sync and never bootstraps poetry.
+
+    Groups mirror poetry's ``--with`` semantics (runtime deps + exactly the
+    listed groups), and pytest phases run bare — the sync targets the venv
+    the bootstrap activated, so no runner prefix is needed.
+    """
+    (tmp_path / "uv.lock").touch()
+    inner = inner_script(load_fixture(tmp_path), "debian13")
+
+    assert "uv sync --locked --active --no-default-groups --group test --group stories" in inner
+    assert inner.index("export UV_PYTHON_DOWNLOADS=never") < inner.index("uv venv")
+    assert inner.index("rm -rf .venv") < inner.index("uv venv")
+    assert "export UV_PYTHON_INSTALL_DIR=/opt/uv/python" in inner
+    assert "pytest tests/integration/ -v --tb=short" in inner
+    assert "poetry run pytest" not in inner
+    assert "poetry install" not in inner
+    assert "uv tool install -q poetry" not in inner
+
+
+def test_inner_uv_nix_slot_installs_uv_into_the_wrapped_venv(tmp_path: Path) -> None:
+    """The nix slot keeps its stdlib venv on the wrapped interpreter; uv rides
+    inside that venv instead of a separate poetry env."""
+    (tmp_path / "uv.lock").touch()
+    inner = inner_script(load_fixture(tmp_path), "nix")
+
+    assert "python3.12 -m venv .venv" in inner
+    assert "pip install --quiet uv" in inner
+    assert "uv sync --locked --active --no-default-groups --group test --group docs" in inner
+    assert ".poetry-venv" not in inner
+
+
+def test_inner_scrubs_stale_venv_and_finds_managed_python(tmp_path: Path) -> None:
+    """Both installers scrub a copied-in .venv and re-export the managed
+    interpreter home — image ENV does not survive the su drop, and a stale
+    checkout venv carries dead absolute shebangs."""
+    poetry_inner = inner_script(load_fixture(tmp_path), "debian13")
+    assert "rm -rf .venv" in poetry_inner
+    assert "export UV_PYTHON_INSTALL_DIR=/opt/uv/python" in poetry_inner
+    assert "UV_PYTHON_DOWNLOADS" not in poetry_inner  # poetry mode may still download
+
+    (tmp_path / "uv.lock").touch()
+    nix_inner = inner_script(load_fixture(tmp_path), "nix")
+    assert "rm -rf .venv" in nix_inner

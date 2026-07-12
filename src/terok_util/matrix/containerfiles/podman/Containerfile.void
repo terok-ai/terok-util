@@ -34,7 +34,10 @@ RUN xbps-install -Suy xbps \
         base-devel libffi-devel \
         $EXTRA_PACKAGES
 
-{% include "_uv-binary.j2" %}
+# Rolling python3 outruns the matrix interpreter, and the runtime
+# download that used to paper over it is pinned off — provision the
+# managed 3.12 at build time like the other too-old/too-new distros.
+{% include "_uv-python312.j2" %}
 
 {% set user_shell = ' -s /bin/bash' %}
 {% set rootless_network_cmd = 'slirp4netns' %}

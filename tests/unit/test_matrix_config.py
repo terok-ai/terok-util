@@ -110,3 +110,10 @@ def test_bad_configs_are_rejected(tmp_path: Path, mutation: str, match: str) -> 
     """Typos and contradictions fail loudly instead of silently skipping work."""
     with pytest.raises(MatrixConfigError, match=match):
         load_config(write_config(tmp_path, mutation))
+
+
+def test_installer_sniffed_from_lockfile(tmp_path: Path) -> None:
+    """uv.lock at the repo root flips the installer; its absence means poetry."""
+    assert load_fixture(tmp_path).installer == "poetry"
+    (tmp_path / "uv.lock").touch()
+    assert load_fixture(tmp_path).installer == "uv"

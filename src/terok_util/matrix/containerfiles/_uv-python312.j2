@@ -6,7 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 {% include "_uv-binary.j2" %}
 # Install the managed interpreter to a world-readable shared dir - the
 # default (/root/.local/...) would be invisible to the test user, who
-# would silently re-download Python on every run.  ENV persists into
-# the test session, so `uv venv --python 3.12` finds it there.
-ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
+# would silently re-download Python on every run.  This ENV does NOT
+# survive the `su - <test user>` drop, so the inner script re-exports
+# the same path (UV_MANAGED_PYTHON_DIR in the engine catalog).
+ENV UV_PYTHON_INSTALL_DIR={{ uv_python_dir }}
 RUN uv python install 3.12 && chmod -R a+rX /opt/uv

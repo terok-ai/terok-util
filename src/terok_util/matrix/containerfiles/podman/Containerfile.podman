@@ -17,11 +17,19 @@ RUN dnf install -y \
 # Ensure runtime dir exists for the pre-existing 'podman' user
 RUN mkdir -p /run/user/$(id -u podman) && chown podman:podman /run/user/$(id -u podman)
 
-# Disable per-container kernel keyring — prevents keyring leak / EDQUOT.
-# Use a conf.d drop-in: the base image already defines [containers] in the
-# main file, and TOML rejects a duplicate section header.
+# Two overrides via a conf.d drop-in (the base image already defines
+# [containers] in the main file, and TOML rejects a duplicate header):
+#
+# - keyring: disable the per-container kernel keyring — prevents
+#   keyring leak / EDQUOT.
+# - netns: the upstream image ships netns="host" (nested containers
+#   share the outer netns — the podman-in-podman CI convenience shape).
+#   Shield's whole subject is the per-container netns, so nested
+#   containers must get a private one; the matrix runs slots
+#   --privileged, so pasta has the tun device it needs, exactly as on
+#   every other slot.
 RUN mkdir -p /etc/containers/containers.conf.d \
-    && printf '[containers]\nkeyring = false\n' \
-        > /etc/containers/containers.conf.d/00-no-keyring.conf
+    && printf '[containers]\nkeyring = false\nnetns = "private"\n' \
+        > /etc/containers/containers.conf.d/00-matrix.conf
 
 WORKDIR /src

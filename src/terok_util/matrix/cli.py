@@ -22,11 +22,12 @@ import os
 import platform
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .catalog import SLOTS, SlotKind
 from .config import MatrixConfig, MatrixConfigError, load_config
-from .runner import build_image, prune_dangling, run_slot
+from .runner import SlotResult, build_image, prune_dangling, run_slot
 
 DEFAULT_CONFIG = Path("tests/containers/matrix.yml")
 
@@ -39,6 +40,10 @@ YELLOW = "\033[1;33m" if _TTY else ""
 GREEN = "\033[1;32m" if _TTY else ""
 RED = "\033[1;31m" if _TTY else ""
 DIM = "\033[2m" if _TTY else ""
+# Slot-tag color for -j output: one color for ALL tags (color encodes
+# message type, not source identity).  A dimmed steel blue where the
+# terminal speaks 256 colors, plain dim elsewhere.
+TAG = "\033[2;38;5;67m" if _TTY and "256color" in os.environ.get("TERM", "") else DIM
 RESET = "\033[0m" if _TTY else ""
 
 
@@ -103,6 +108,7 @@ def _run_matrix(
     skipped: list[str] = []
     failed: list[str] = []
     observed: dict[str, str] = {}
+    runnable: list[str] = []
     for name in targets:
         if reason := _skip_reason(config, name):
             print(
@@ -114,12 +120,19 @@ def _run_matrix(
             print(f"{RED}==> {name}: FAIL (image build failed){RESET}", file=sys.stderr)
             failed.append(name)
             continue
-        _print_slot_heading(config, name, args.scope)
-        result = run_slot(config, name, results_dir, scope=args.scope)
-        observed[name] = result.observed
-        verdict = f"{GREEN}==> {name}: PASS" if result.passed else f"{RED}==> {name}: FAIL"
-        print(f"{verdict}{RESET} {_version_summary(config, name, result.observed)}")
-        (passed if result.passed else failed).append(name)
+        runnable.append(name)
+
+    if args.jobs > 1 and len(runnable) > 1:
+        results = _run_slots_tagged(config, runnable, args, results_dir)
+    else:
+        results = {}
+        for name in runnable:
+            _print_slot_heading(config, name, args.scope)
+            results[name] = run_slot(config, name, results_dir, scope=args.scope)
+            _print_verdict(config, name, results[name])
+    for name in runnable:
+        observed[name] = results[name].observed
+        (passed if results[name].passed else failed).append(name)
 
     _print_summary(config, passed, skipped, failed, observed)
     if not args.keep_dangling:
@@ -144,6 +157,61 @@ def _build_images(
             )
             build_failed.add(name)
     return build_failed
+
+
+def _run_slots_tagged(
+    config: MatrixConfig, names: list[str], args: argparse.Namespace, results_dir: Path
+) -> dict[str, SlotResult]:
+    """Run slots concurrently with live, per-line-tagged output.
+
+    Every line still streams the moment the slot produces it — nothing
+    is buffered away from the operator.  Attribution comes from a
+    colored ``[slot]`` prefix on each line (the docker-compose model),
+    emitted as a single write so concurrent slots interleave only
+    between lines.  Verdicts print as slots finish; the summary at the
+    end is the same one a serial run prints.
+    """
+    prefixes = _slot_prefixes(names)
+    results: dict[str, SlotResult] = {}
+    # The shared results dir is safe: per-slot artifact names never
+    # collide (outer-<slot>.sh, <slot>.podman-version, ...).
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        futures = {}
+        for name in names:
+            print(f"{prefixes[name]}{CYAN}==> Testing {BOLD}{name}{RESET}")
+            futures[
+                pool.submit(
+                    run_slot,
+                    config,
+                    name,
+                    results_dir,
+                    scope=args.scope,
+                    line_prefix=prefixes[name],
+                )
+            ] = name
+        for future in as_completed(futures):
+            name = futures[future]
+            results[name] = future.result()
+            _print_verdict(config, name, results[name])
+    return results
+
+
+def _slot_prefixes(names: list[str]) -> dict[str, str]:
+    """Aligned ``[slot] `` line tags, uniform and unobtrusive.
+
+    One color for all tags: in this codebase color encodes message
+    *type* (pass/fail/skip), not source identity — a rainbow of tags
+    would read as ten different severities.  See ``TAG`` for the
+    dim-blue/plain-dim terminal split.
+    """
+    width = max(len(name) for name in names)
+    return {name: f"{TAG}[{name:<{width}}]{RESET} " for name in names}
+
+
+def _print_verdict(config: MatrixConfig, name: str, result: SlotResult) -> None:
+    """One PASS/FAIL line with the observed-version summary."""
+    verdict = f"{GREEN}==> {name}: PASS" if result.passed else f"{RED}==> {name}: FAIL"
+    print(f"{verdict}{RESET} {_version_summary(config, name, result.observed)}")
 
 
 def _skip_reason(config: MatrixConfig, name: str) -> str:
@@ -274,6 +342,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--build-only", action="store_true", help="build images without running tests"
     )
     parser.add_argument("--no-cache", action="store_true", help="rebuild images from scratch")
+    parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=1,
+        help="run up to N slots concurrently, live output tagged [slot] per line",
+    )
     parser.add_argument(
         "--keep-dangling", action="store_true", help="skip the teardown prune of dangling layers"
     )

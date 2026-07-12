@@ -11,6 +11,7 @@ build failure, prune, keyring warning) runs without a container host.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -394,3 +395,84 @@ def test_scope_flags_are_mutually_exclusive() -> None:
     """--unit-only and --integ-only cannot combine."""
     with pytest.raises(SystemExit):
         cli._parse_args(["--unit-only", "--integ-only"])
+
+
+class RecordedPopen:
+    """Stand-in for ``subprocess.Popen`` that scripts streamed output."""
+
+    def __init__(self, lines: list[str], returncode: int = 0) -> None:
+        self.lines = lines
+        self.returncode = returncode
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str], **_kwargs: Any) -> RecordedPopen:
+        """Record the argv and hand back self as the process object."""
+        self.calls.append(list(argv))
+        return self
+
+    def __enter__(self) -> RecordedPopen:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    @property
+    def stdout(self) -> Any:
+        """The scripted output lines, newline-terminated like a real pipe."""
+        return iter(f"{line}\n" for line in self.lines)
+
+    def wait(self) -> int:
+        """The scripted exit code."""
+        return self.returncode
+
+
+def test_run_slot_with_line_prefix_streams_tagged_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A line_prefix tags every streamed line — live, attributable output
+    for concurrent slots instead of buffered-away logs."""
+    config = load_fixture(tmp_path)
+    monkeypatch.setattr(runner.subprocess, "Popen", RecordedPopen(["hello", "world"]))
+    results = tmp_path / "results"
+    results.mkdir()
+
+    result = runner.run_slot(config, "debian13", results, line_prefix="[debian13] ")
+
+    assert result.passed
+    out = capsys.readouterr().out
+    assert "[debian13] hello" in out
+    assert "[debian13] world" in out
+
+
+def test_matrix_parallel_jobs_tags_lines_and_keeps_the_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """-j N streams tagged output per slot and reports the same summary a
+    serial run would."""
+    write_config(tmp_path)
+
+    def fake_run_slot(config, name, results_dir, scope="all", line_prefix=None):
+        assert line_prefix is not None, "concurrent slots must tag their lines"
+        sys.stdout.write(f"{line_prefix}log-of-{name}\n")
+        return runner.SlotResult(passed=name != "podman", observed="5.0.0")
+
+    monkeypatch.setattr(cli, "run_slot", fake_run_slot)
+    monkeypatch.setattr(cli, "_build_images", lambda *a, **k: set())
+    monkeypatch.setattr(cli, "prune_dangling", lambda config: 0)
+    monkeypatch.setattr(cli, "_skip_reason", lambda config, name: "")
+
+    rc = cli.main(["--config", str(tmp_path / "tests" / "containers" / "matrix.yml"), "-j", "3"])
+    out = capsys.readouterr().out
+
+    assert rc == 1  # podman slot scripted to fail
+    assert "log-of-debian13" in out
+    assert "==> debian13: PASS" in out
+    assert "==> podman: FAIL" in out
+    # every slot line carries its tag, aligned to the longest slot name
+    for line in out.splitlines():
+        if "log-of-debian13" in line:
+            assert line.startswith("[debian13")

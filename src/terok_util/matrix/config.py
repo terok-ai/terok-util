@@ -98,6 +98,11 @@ class MatrixConfig:
         phases: Repo-level test flow.
         containers_dir: Directory of the ``matrix.yml`` (fragments live here).
         repo_root: Build context and bind-mounted source tree.
+        installer: In-container dependency installer, sniffed from the
+            repo's lockfile — ``uv`` when ``uv.lock`` exists at the repo
+            root, ``poetry`` otherwise.  Not a ``matrix.yml`` key: the
+            lockfile already states the fact, so declaring it again
+            could only ever disagree.
     """
 
     image_prefix: str
@@ -108,6 +113,7 @@ class MatrixConfig:
     phases: tuple[Phase, ...]
     containers_dir: Path
     repo_root: Path
+    installer: str = "poetry"
 
     def slot_poetry_groups(self, name: str) -> tuple[str, ...]:
         """Dependency groups effective for slot ``name``."""
@@ -153,6 +159,7 @@ def load_config(path: Path) -> MatrixConfig:
         phases=_parse_phases(data.list_of_maps("phases"), where=str(path)),
         containers_dir=path.parent.resolve(),
         repo_root=path.parent.parent.parent.resolve(),
+        installer="uv" if (path.parent.parent.parent / "uv.lock").exists() else "poetry",
     )
     data.reject_leftovers()
     return config
