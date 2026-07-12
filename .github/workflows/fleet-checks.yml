@@ -1,0 +1,242 @@
+# Pin third-party actions to full commit SHAs for supply-chain security.
+# GitHub-owned actions (actions/*) may use version tags.
+#
+# Reusable static-check battery for the terok package family.  A consumer
+# repo's ci.yml calls this instead of carrying ~150 lines of identical
+# jobs; everything derivable is derived (the package directory comes from
+# the repo name), and only genuinely varying jobs take a toggle.
+#
+#   jobs:
+#     checks:
+#       uses: terok-ai/terok-util/.github/workflows/fleet-checks.yml@vX.Y.Z
+#
+# terok-util itself calls it via the local `./` form, so this file is
+# exercised by the hosting repo's own CI at every commit.
+
+name: Fleet checks (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      package-dir:
+        description: "Source dir under check; empty derives src/<repo name with dashes as underscores>"
+        type: string
+        default: ""
+      docstrings-fail-under:
+        description: "Minimum docstring coverage percentage"
+        type: string
+        default: "95"
+      run-tach:
+        description: "Check module boundaries (repo ships tach.toml)"
+        type: boolean
+        default: true
+      run-security:
+        description: "Run the bandit SAST scan (repo ships bandit in its dev group)"
+        type: boolean
+        default: true
+      run-typecheck:
+        description: "Run mypy (repo ships mypy in its dev group)"
+        type: boolean
+        default: true
+      run-deadcode:
+        description: "Run vulture (repo ships vulture in its dev group)"
+        type: boolean
+        default: true
+      run-readme-check:
+        description: "Verify README renders for PyPI"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# The package dir is needed as a step-level value in several jobs; each
+# job derives it identically so the jobs stay independent (no needs
+# chain serialising a fan-out of two-second checks).
+env:
+  PKG_DIR_INPUT: ${{ inputs.package-dir }}
+
+jobs:
+  reuse:
+    if: github.repository_owner == 'terok-ai'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: REUSE compliance check
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6
+
+  lint:
+    if: github.repository_owner == 'terok-ai'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Ruff lint
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          args: check
+
+      - name: Ruff format check
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          args: format --check
+
+      - name: ASCII-only pyproject
+        run: |
+          ! LC_ALL=C grep -nP '[^\x00-\x7F]' pyproject.toml
+
+  docstring-coverage:
+    if: github.repository_owner == 'terok-ai'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Install tools
+        run: uv sync --locked --only-group dev
+
+      - name: Check docstring coverage
+        run: |
+          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "${{ github.event.repository.name }}" | tr - _)}"
+          uv run --no-sync docstr-coverage "$PKG_DIR/" --fail-under=${{ inputs.docstrings-fail-under }}
+
+  dead-code:
+    if: github.repository_owner == 'terok-ai' && inputs.run-deadcode
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Install tools
+        run: uv sync --locked --only-group dev
+
+      # A repo-root vulture_whitelist.py (deliberate dynamic-use names)
+      # rides along when the repo ships one.
+      - name: Check for dead code
+        run: |
+          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "${{ github.event.repository.name }}" | tr - _)}"
+          WHITELIST=""
+          [ -f vulture_whitelist.py ] && WHITELIST="vulture_whitelist.py"
+          uv run --no-sync vulture "$PKG_DIR/" $WHITELIST --min-confidence 80
+
+  tach:
+    if: github.repository_owner == 'terok-ai' && inputs.run-tach
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Install tools
+        run: uv sync --locked --only-group dev
+
+      - name: Check module boundaries
+        run: uv run --no-sync tach check
+
+  security:
+    if: github.repository_owner == 'terok-ai' && inputs.run-security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Install tools
+        run: uv sync --locked --only-group dev
+
+      # ``-c pyproject.toml`` only where the repo declares [tool.bandit];
+      # bandit errors out when pointed at a config-less pyproject.
+      - name: Run SAST scan
+        run: |
+          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "${{ github.event.repository.name }}" | tr - _)}"
+          CONFIG=""
+          grep -q '^\[tool\.bandit' pyproject.toml && CONFIG="-c pyproject.toml"
+          uv run --no-sync bandit $CONFIG -r "$PKG_DIR/" -ll
+
+  # Static type checking via mypy.  Installs the package + main deps so
+  # mypy can read real signatures for third-party types instead of
+  # falling back to ``Any`` (via ``ignore_missing_imports = true``).
+  typecheck:
+    if: github.repository_owner == 'terok-ai' && inputs.run-typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Install project + tools
+        run: uv sync --locked
+
+      - name: Run mypy
+        run: |
+          PKG_DIR="${PKG_DIR_INPUT:-src/$(echo "${{ github.event.repository.name }}" | tr - _)}"
+          uv run --no-sync mypy "$PKG_DIR/"
+
+  readme-check:
+    if: github.repository_owner == 'terok-ai' && inputs.run-readme-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Verify README renders for PyPI
+        run: uv run --no-project --with 'readme-renderer[md]' python -m readme_renderer README.md --format md
