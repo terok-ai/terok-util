@@ -54,7 +54,7 @@ def test_build_image_argv_and_rendered_containerfile(
     assert runner.build_image(config, "debian13", results, no_cache=True)
 
     (argv,) = recorded.calls
-    assert argv[:3] == ["podman", "build", "--no-cache"]
+    assert argv[:4] == ["podman", "build", "--pull=newer", "--no-cache"]
     assert "IMAGE_PREFIX=terok-fixture-test" in argv
     assert "EXTRA_PACKAGES=openssh-client dbus" in argv
     assert "terok-fixture-test:debian13" in argv

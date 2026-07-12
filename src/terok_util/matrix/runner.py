@@ -84,6 +84,12 @@ def build_image(
     argv = [
         "podman",
         "build",
+        # Base tags are moving targets (quay.io/podman/stable:latest,
+        # distro :latest bases) but a cached FROM never re-checks the
+        # registry -- the podman slot sat on 5.8.2 while quay shipped
+        # newer.  --pull=newer is a digest check per build: pulls only
+        # when the registry actually has a fresher base.
+        "--pull=newer",
         *(["--no-cache"] if no_cache else []),
         "--build-arg",
         f"IMAGE_PREFIX={config.image_prefix}",
