@@ -72,6 +72,12 @@ jobs:
           test "$PR_REPO" = "$EXPECTED_REPO"
           test "$PR_SHA" = "$EXPECTED_SHA"
 
+          # The artifact came from the fork-controlled run; every value
+          # that reaches scanner arguments must match its strict shape.
+          echo "$PR_NUMBER" | grep -qE '^[0-9]+$'
+          echo "$PR_BASE"   | grep -qE '^[A-Za-z0-9._/-]+$'
+          echo "$PR_REF"    | grep -qE '^[A-Za-z0-9._/-]+$'
+
           {
             printf 'PR_NUMBER=%s\n' "$PR_NUMBER"
             printf 'PR_BASE=%s\n' "$PR_BASE"
