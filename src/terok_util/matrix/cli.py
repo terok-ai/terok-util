@@ -29,6 +29,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import timedelta
 from pathlib import Path
 
 from .catalog import SLOTS, SlotKind
@@ -48,8 +49,6 @@ DEFAULT_CONFIG = Path("tests/containers/matrix.yml")
 EXIT_INTERRUPTED = 130
 
 # Sexagesimal steps for the wall-time formatter.
-SECONDS_PER_MINUTE = 60
-MINUTES_PER_HOUR = 60
 
 # ── Terminal colors (disabled when stdout is not a tty) ────────────
 
@@ -138,23 +137,15 @@ def _run_matrix(
     finally:
         if not args.keep_dangling:
             _teardown(config)
-        print(f"\n{BOLD}Matrix wall time: {_format_wall_time(_monotonic_now() - started)}{RESET}")
+        # timedelta's H:MM:SS is the same shape pytest prints in the
+        # per-slot summaries above -- one clock format per log.
+        elapsed = timedelta(seconds=round(_monotonic_now() - started))
+        print(f"\n{BOLD}Matrix wall time: {elapsed}{RESET}")
 
 
 def _monotonic_now() -> float:
     """The walk's one clock source — a seam so tests can script time."""
     return time.monotonic()
-
-
-def _format_wall_time(seconds: float) -> str:
-    """``34s`` / ``12m34s`` / ``1h02m03s`` — whole seconds, units only as needed."""
-    minutes, secs = divmod(int(seconds), SECONDS_PER_MINUTE)
-    hours, minutes = divmod(minutes, MINUTES_PER_HOUR)
-    if hours:
-        return f"{hours}h{minutes:02d}m{secs:02d}s"
-    if minutes:
-        return f"{minutes}m{secs:02d}s"
-    return f"{secs}s"
 
 
 def _teardown(config: MatrixConfig) -> None:

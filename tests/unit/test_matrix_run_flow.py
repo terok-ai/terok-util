@@ -440,7 +440,7 @@ def test_wall_time_is_the_runs_last_line(
     assert cli.main(_args(tmp_path)) == 0
 
     out = capsys.readouterr().out
-    assert out.splitlines()[-1] == "Matrix wall time: 12m34s"
+    assert out.splitlines()[-1] == "Matrix wall time: 0:12:34"
     assert out.index("===== Matrix Summary =====") < out.index("pruned") < out.index("wall time")
 
 
@@ -457,28 +457,11 @@ def test_wall_time_survives_an_interrupt(
 
     assert cli.main(_args(tmp_path)) == 130
 
-    assert "Matrix wall time: 42s" in capsys.readouterr().out
+    assert "Matrix wall time: 0:00:42" in capsys.readouterr().out
 
 
 def _raise_interrupt(*_args: Any, **_kwargs: Any) -> runner.SlotResult:
     raise KeyboardInterrupt
-
-
-@pytest.mark.parametrize(
-    ("seconds", "rendered"),
-    [
-        (0, "0s"),
-        (34, "34s"),
-        (60, "1m00s"),
-        (12 * 60 + 34, "12m34s"),
-        (3600 + 2 * 60 + 3, "1h02m03s"),
-        (26 * 3600, "26h00m00s"),
-        (59.9, "59s"),  # whole seconds — sub-second noise is dropped, not rounded up
-    ],
-)
-def test_wall_time_formatting(seconds: float, rendered: str) -> None:
-    """Units appear only once the run is long enough to need them."""
-    assert cli._format_wall_time(seconds) == rendered
 
 
 # ── cli: keyring preflight ─────────────────────────────────────────
