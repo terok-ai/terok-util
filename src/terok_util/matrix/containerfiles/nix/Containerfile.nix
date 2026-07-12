@@ -52,6 +52,13 @@ RUN nix --extra-experimental-features 'nix-command flakes' \
         profile add --impure --expr \
         '(builtins.getFlake "nixpkgs").legacyPackages.${builtins.currentSystem}.python312.withPackages (ps: [ ps.pip ])'
 
+# uv must come from nixpkgs: the manylinux wheel pip would otherwise
+# install into the venv is dynamically linked against the FHS ld-linux
+# loader NixOS deliberately lacks ("cannot execute: required file not
+# found").  With uv on PATH the inner script's fallback never fires.
+RUN nix --extra-experimental-features 'nix-command flakes' \
+        profile add nixpkgs#uv
+
 # /bin/bash → the bash the base image already has, so shebangs and
 # the testrunner login shell resolve.
 RUN ln -s /nix/var/nix/profiles/default/bin/bash /bin/bash
