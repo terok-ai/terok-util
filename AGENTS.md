@@ -39,10 +39,10 @@ version:
   the patch-series form is exactly right — do *not* exact-pin them (it
   would fight the multi-repo release/PR-chain flow).
 
-Dev / test / docs / tooling dependencies (the `[tool.poetry.group.*]` groups)
+Dev / test / docs / tooling dependencies (the `[dependency-groups]` tables)
 are **exempt** — they are not shipped to installers and exact-pinning them is
 an unwarranted maintenance burden the developers can absorb. After changing
-any pin, run `poetry lock` and commit `pyproject.toml` and `poetry.lock`
+any pin, run `uv lock` and commit `pyproject.toml` and `uv.lock`
 together.
 
 **Comment discipline in `pyproject.toml`.** The dependency tables stay

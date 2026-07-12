@@ -29,7 +29,7 @@ branch tip on the contributor's fork instead:
 "terok-util @ git+https://github.com/<fork-owner>/terok-util.git@<pr-branch>",
 ```
 
-Refresh `poetry.lock` after editing. The `no-git-deps` release guard
+Refresh `uv.lock` after editing. The `no-git-deps` release guard
 rejects builds while a git pin is in place, so repin to the release
 wheel before cutting a release.
 

@@ -1,8 +1,0 @@
-# CI-only tool constraint ranges (managed by dependabot via pip ecosystem).
-# Intentionally wider than pyproject.toml caret constraints — these install
-# standalone CLI tools, not importable libraries, so exact sync is unnecessary.
-docstr-coverage>=2.3.2,<3.0.0
-vulture>=2.16,<3.0.0
-bandit>=1.9.4,<2.0.0
-tach>=0.35.0,<1.0.0
-mypy>=2.1.0,<3.0

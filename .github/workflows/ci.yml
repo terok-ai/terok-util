@@ -61,11 +61,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
       - name: Install tools
-        run: pip install -r .github/requirements-ci.txt
+        run: uv sync --locked --only-group dev
 
       - name: Check docstring coverage
-        run: docstr-coverage src/terok_util/ --fail-under=95
+        run: uv run --no-sync docstr-coverage src/terok_util/ --fail-under=95
 
   dead-code:
     if: github.repository == 'terok-ai/terok-util'
@@ -79,11 +84,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
       - name: Install tools
-        run: pip install -r .github/requirements-ci.txt
+        run: uv sync --locked --only-group dev
 
       - name: Check for dead code
-        run: vulture src/terok_util/ vulture_whitelist.py --min-confidence 80
+        run: uv run --no-sync vulture src/terok_util/ vulture_whitelist.py --min-confidence 80
 
   tach:
     if: github.repository == 'terok-ai/terok-util'
@@ -97,11 +107,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
       - name: Install tools
-        run: pip install -r .github/requirements-ci.txt
+        run: uv sync --locked --only-group dev
 
       - name: Check module boundaries
-        run: tach check
+        run: uv run --no-sync tach check
 
   security:
     if: github.repository == 'terok-ai/terok-util'
@@ -115,11 +130,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
       - name: Install tools
-        run: pip install -r .github/requirements-ci.txt
+        run: uv sync --locked --only-group dev
 
       - name: Run SAST scan
-        run: bandit -c pyproject.toml -r src/terok_util/ -ll
+        run: uv run --no-sync bandit -c pyproject.toml -r src/terok_util/ -ll
 
   # Static type checking via mypy.  Installs the package + main deps so
   # mypy can read real signatures for third-party types instead of
@@ -136,13 +156,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
       - name: Install project + tools
-        run: |
-          pip install -e .
-          pip install -r .github/requirements-ci.txt
+        run: uv sync --locked
 
       - name: Run mypy
-        run: mypy src/terok_util/
+        run: uv run --no-sync mypy src/terok_util/
 
   readme-check:
     if: github.repository == 'terok-ai/terok-util'
@@ -155,7 +178,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+
       - name: Verify README renders for PyPI
-        run: |
-          pip install 'readme_renderer[md]'
-          python -m readme_renderer README.md --format md
+        run: uv run --no-project --with 'readme-renderer[md]' python -m readme_renderer README.md --format md
