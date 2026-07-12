@@ -19,7 +19,7 @@ FULL_MATRIX_YML = """\
 image-prefix: terok-fixture-test
 flavor: podman
 expect: [podman, nft, internet]
-poetry-groups: [test, stories]
+groups: [test, stories]
 
 slots:
   debian13:
@@ -30,7 +30,7 @@ slots:
       arches: [aarch64, arm64]
       reason: no musl aarch64 wheels for the TUI grammar stack
   nix:
-    poetry-groups: [test, docs]
+    groups: [test, docs]
     expect: []
     phases:
       - name: unit tests
@@ -43,14 +43,14 @@ phases:
     pytest: tests/integration/ -v --tb=short -m "not needs_hooks"
   - name: install hooks
     run:
-      - poetry run stack-under-test setup
+      - stack-under-test setup
     expect-add: [hooks]
   - name: integration tests with hooks
     scope: integ
     pytest: tests/integration/ -v --tb=short -m "needs_hooks"
   - name: diagnostics
     run:
-      - poetry run stack-under-test config 2>&1
+      - stack-under-test config 2>&1
     tolerate-failure: true
 """
 

@@ -20,7 +20,7 @@ def test_full_config_round_trips(tmp_path: Path) -> None:
     assert config.image_prefix == "terok-fixture-test"
     assert config.flavor == "podman"
     assert config.expect == ("podman", "nft", "internet")
-    assert config.poetry_groups == ("test", "stories")
+    assert config.groups == ("test", "stories")
     assert list(config.slots) == ["debian13", "podman", "alpine", "nix"]
     assert config.slots["debian13"].extra_packages == ("openssh-client", "dbus")
     assert config.slots["alpine"].skip_arches == ("aarch64", "arm64")
@@ -44,11 +44,11 @@ def test_repo_root_derived_from_config_location(tmp_path: Path) -> None:
 
 
 def test_slot_overrides_fall_back_to_repo_level(tmp_path: Path) -> None:
-    """Slot-level poetry-groups/expect/phases override; absent = repo-level."""
+    """Slot-level groups/expect/phases override; absent = repo-level."""
     config = load_fixture(tmp_path)
 
-    assert config.slot_poetry_groups("debian13") == ("test", "stories")
-    assert config.slot_poetry_groups("nix") == ("test", "docs")
+    assert config.slot_groups("debian13") == ("test", "stories")
+    assert config.slot_groups("nix") == ("test", "docs")
     assert config.slot_expect("podman") == ("podman", "nft", "internet")
     assert config.slot_expect("nix") == ()
     assert [phase.name for phase in config.slot_phases("nix")] == ["unit tests"]
@@ -63,7 +63,7 @@ def test_defaults_for_minimal_config(tmp_path: Path) -> None:
         "phases:\n  - name: all\n    pytest: tests/ -v\n",
     )
 
-    assert config.poetry_groups == ("test",)
+    assert config.groups == ("test",)
     assert config.expect == ()
     assert config.slots["debian13"].extra_packages == ()
 
@@ -112,8 +112,13 @@ def test_bad_configs_are_rejected(tmp_path: Path, mutation: str, match: str) -> 
         load_config(write_config(tmp_path, mutation))
 
 
-def test_installer_sniffed_from_lockfile(tmp_path: Path) -> None:
-    """uv.lock at the repo root flips the installer; its absence means poetry."""
-    assert load_fixture(tmp_path).installer == "poetry"
-    (tmp_path / "uv.lock").touch()
-    assert load_fixture(tmp_path).installer == "uv"
+def test_retired_poetry_groups_key_is_rejected(tmp_path: Path) -> None:
+    """The pre-uv ``poetry-groups:`` spelling fails loudly like any typo."""
+    with pytest.raises(MatrixConfigError, match="unknown key.*poetry-groups"):
+        load_config(
+            write_config(
+                tmp_path,
+                "image-prefix: t\nflavor: podman\npoetry-groups: [test]\n"
+                "slots:\n  debian13:\nphases:\n  - name: all\n    pytest: tests/ -v\n",
+            )
+        )

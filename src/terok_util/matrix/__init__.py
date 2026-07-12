@@ -22,7 +22,7 @@ Collaborators, in reading order:
   inside a slot's test container;
 * [`runner`][terok_util.matrix.runner] — host-side build/run/prune;
 * [`cli`][terok_util.matrix.cli] — the ``terok-matrix`` entry point
-  (``poetry run terok-matrix`` from a consuming repo's root).
+  (``uv run terok-matrix`` from a consuming repo's root).
 
 External tooling (the superbuild TUI, CI matrix generation) should not
 shell-parse anything: load the same ``matrix.yml`` via

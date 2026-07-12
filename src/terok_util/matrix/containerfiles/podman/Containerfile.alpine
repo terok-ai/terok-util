@@ -19,7 +19,7 @@ FROM docker.io/library/alpine:3.21
 
 {% include "_header.j2" %}
 
-# musl toolchain (build-base + *-dev) lets poetry build any dependency
+# musl toolchain (build-base + *-dev) lets uv build any dependency
 # that lacks a musllinux wheel; bind-tools provides dig for DNS
 # probes; bash is required by the harness (busybox sh is not bash).
 RUN apk add --no-cache \
