@@ -27,6 +27,7 @@ import os
 import platform
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -45,6 +46,10 @@ DEFAULT_CONFIG = Path("tests/containers/matrix.yml")
 
 # 128 + SIGINT: the conventional exit code of an interrupted run.
 EXIT_INTERRUPTED = 130
+
+# Sexagesimal steps for the wall-time formatter.
+SECONDS_PER_MINUTE = 60
+MINUTES_PER_HOUR = 60
 
 # ── Terminal colors (disabled when stdout is not a tty) ────────────
 
@@ -119,7 +124,12 @@ def _run_matrix(
     as surely as a full run does, so both still owe the teardown — the
     ``finally`` is what keeps an interrupted fleet run from stranding
     tens of GB of dangling layers.
+
+    The wall-time line rides the same ``finally``, after the teardown, so
+    it is the run's very last word — and an interrupted run still tells
+    the operator how long it lived.
     """
+    started = _monotonic_now()
     try:
         return _walk_matrix(config, targets, args, results_dir)
     except KeyboardInterrupt:
@@ -128,6 +138,23 @@ def _run_matrix(
     finally:
         if not args.keep_dangling:
             _teardown(config)
+        print(f"\n{BOLD}Matrix wall time: {_format_wall_time(_monotonic_now() - started)}{RESET}")
+
+
+def _monotonic_now() -> float:
+    """The walk's one clock source — a seam so tests can script time."""
+    return time.monotonic()
+
+
+def _format_wall_time(seconds: float) -> str:
+    """``34s`` / ``12m34s`` / ``1h02m03s`` — whole seconds, units only as needed."""
+    minutes, secs = divmod(int(seconds), SECONDS_PER_MINUTE)
+    hours, minutes = divmod(minutes, MINUTES_PER_HOUR)
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
 
 
 def _teardown(config: MatrixConfig) -> None:

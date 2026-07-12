@@ -418,6 +418,69 @@ def test_version_mismatch_is_a_warning_not_a_failure(
     assert "PASS" in out
 
 
+# ── cli: the wall-time closer ──────────────────────────────────────
+
+
+def _scripted_clock(monkeypatch: pytest.MonkeyPatch, *readings: float) -> None:
+    """Script the walk's clock seam: one reading per ``_monotonic_now`` call."""
+    clock = iter(readings)
+    monkeypatch.setattr(cli, "_monotonic_now", lambda: next(clock))
+
+
+def test_wall_time_is_the_runs_last_line(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The wall-time line closes the run, after the summary and the prune."""
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+    _scripted_clock(monkeypatch, 100.0, 100.0 + 12 * 60 + 34)
+
+    assert cli.main(_args(tmp_path)) == 0
+
+    out = capsys.readouterr().out
+    assert out.splitlines()[-1] == "Matrix wall time: 12m34s"
+    assert out.index("===== Matrix Summary =====") < out.index("pruned") < out.index("wall time")
+
+
+def test_wall_time_survives_an_interrupt(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ctrl-C still reports how long the run lived — it rides the teardown finally."""
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(cli, "run_slot", _raise_interrupt)
+    _scripted_clock(monkeypatch, 0.0, 42.0)
+
+    assert cli.main(_args(tmp_path)) == 130
+
+    assert "Matrix wall time: 42s" in capsys.readouterr().out
+
+
+def _raise_interrupt(*_args: Any, **_kwargs: Any) -> runner.SlotResult:
+    raise KeyboardInterrupt
+
+
+@pytest.mark.parametrize(
+    ("seconds", "rendered"),
+    [
+        (0, "0s"),
+        (34, "34s"),
+        (60, "1m00s"),
+        (12 * 60 + 34, "12m34s"),
+        (3600 + 2 * 60 + 3, "1h02m03s"),
+        (26 * 3600, "26h00m00s"),
+        (59.9, "59s"),  # whole seconds — sub-second noise is dropped, not rounded up
+    ],
+)
+def test_wall_time_formatting(seconds: float, rendered: str) -> None:
+    """Units appear only once the run is long enough to need them."""
+    assert cli._format_wall_time(seconds) == rendered
+
+
 # ── cli: keyring preflight ─────────────────────────────────────────
 
 
