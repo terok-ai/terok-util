@@ -1,0 +1,85 @@
+# Pin third-party actions to full commit SHAs for supply-chain security.
+# GitHub-owned actions (actions/*) may use version tags.
+#
+# Reusable multi-distro integration test matrix for the terok package
+# family.  Requires a self-hosted runner with podman, --privileged
+# support, and uv.  Will NOT work on GitHub-hosted runners (no nested
+# containers).
+#
+# The slot list is derived from the caller's tests/containers/matrix.yml
+# (the single source of truth the local runs use) via
+# `terok-matrix --slots-json`, so nothing per-repo lives here.  The one
+# input is the optional slot subset, threaded through from the caller's
+# workflow_dispatch input; a consumer repo's test-matrix.yml is a thin
+# caller carrying only the trigger:
+#
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         slots:
+#           description: Space-separated slot subset (default = all declared)
+#           required: false
+#           default: ""
+#   permissions:
+#     contents: read
+#   jobs:
+#     matrix:
+#       uses: terok-ai/terok-util/.github/workflows/fleet-test-matrix.yml@vX.Y.Z
+#       with:
+#         slots: ${{ inputs.slots }}
+#
+# terok-util itself ships the matrix engine but has no container matrix
+# of its own, so unlike the other fleet-* workflows this one cannot be
+# exercised by the hosting repo's CI via a local `./` call; the consumer
+# sweep validates it.
+
+name: Fleet test matrix (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      slots:
+        description: "Space-separated slot subset (default = all declared)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  slots:
+    if: github.repository_owner == 'terok-ai'
+    runs-on: self-hosted
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install the matrix engine (terok-util via uv)
+        run: uv sync --locked --no-default-groups --no-install-project
+      # $SLOTS stays unquoted on purpose: the subset is space-separated
+      # and terok-matrix rejects any name not declared in matrix.yml.
+      - id: gen
+        env:
+          SLOTS: ${{ inputs.slots }}
+        run: echo "matrix=$(uv run --no-sync terok-matrix --slots-json $SLOTS)" >> "$GITHUB_OUTPUT"
+
+  matrix:
+    needs: slots
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: ${{ fromJSON(needs.slots.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install the matrix engine (terok-util via uv)
+        run: uv sync --locked --no-default-groups --no-install-project
+      - name: Run test matrix (${{ matrix.slot }})
+        env:
+          SLOT: ${{ matrix.slot }}
+        run: uv run --no-sync terok-matrix "$SLOT"

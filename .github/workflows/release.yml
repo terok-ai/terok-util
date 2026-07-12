@@ -27,31 +27,14 @@ jobs:
     permissions:
       contents: read
 
+  # The build job lives in fleet-release-build.yml (reusable across the
+  # package family; hosted here).  The local ``./`` ref runs it at this
+  # very commit — sibling repos pin it by release tag instead.
   build:
     needs: no-git-deps
-    runs-on: ubuntu-latest
     permissions:
       contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          fetch-depth: 0    # hatch-vcs needs full history
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-
-      - name: Build distributions
-        run: uv build
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dist
-          path: dist/
-          retention-days: 90    # cover any realistic re-run window
+    uses: ./.github/workflows/fleet-release-build.yml
 
   github-release:
     needs: build

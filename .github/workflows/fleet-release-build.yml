@@ -1,0 +1,53 @@
+# Pin third-party actions to full commit SHAs for supply-chain security.
+# GitHub-owned actions (actions/*) may use version tags.
+#
+# Reusable release build job for the terok package family: checkout with
+# full history (hatch-vcs derives the version from tags), `uv build`, and
+# upload of dist/ as the `dist` artifact for the caller's downstream
+# publish jobs.  Nothing here varies per repo, so there are no inputs.
+# A consumer repo's release.yml replaces its inline build job with:
+#
+#   build:
+#     needs: no-git-deps
+#     permissions:
+#       contents: read
+#     uses: terok-ai/terok-util/.github/workflows/fleet-release-build.yml@vX.Y.Z
+#
+# terok-util itself calls it via the local `./` form.  release.yml runs
+# on tags, so the self-consumption is exercised at the next release; PR
+# CI validates only the syntax.
+
+name: Fleet release build (reusable)
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.repository_owner == 'terok-ai'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0    # hatch-vcs needs full history
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+
+      - name: Build distributions
+        run: uv build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          retention-days: 90    # cover any realistic re-run window
