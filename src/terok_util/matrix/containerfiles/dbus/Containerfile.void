@@ -42,5 +42,12 @@ RUN xbps-install -Suy xbps \
 
 {% include "_uv-binary.j2" %}
 
+# Rolling python3 outruns the matrix interpreter, and the runtime
+# download that used to paper over it is pinned off — provision the
+# managed 3.12 at build time, exactly like the podman-flavor void slot
+# (this flavor missed that fix and failed clearance's void slot with
+# "No interpreter found for Python 3.12").
+{% include "_uv-python312.j2" %}
+
 RUN useradd -m -s /bin/bash testrunner
 WORKDIR /src
