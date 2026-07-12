@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from terok_util.matrix.catalog import SLOTS, UV_IMAGE_TAG, SlotKind
+from terok_util.matrix.catalog import OWNERSHIP_LABEL, SLOTS, UV_IMAGE_TAG, SlotKind
 from terok_util.matrix.runner import _run_argv, render_containerfile
 from unit.matrix_fixtures import load_fixture, minimal_yml
 
@@ -100,3 +100,13 @@ def test_run_argv_matches_the_flavor_and_kind(tmp_path: Path) -> None:
     dbus_argv = _run_argv(dbus_config, "debian13", results)
     assert "--privileged" not in dbus_argv
     assert "--security-opt" not in dbus_argv
+
+
+def test_run_argv_stamps_the_ownership_label_explicitly(tmp_path: Path) -> None:
+    """Teardown's container sweep must not lean on image-label inheritance."""
+    config = load_fixture(tmp_path)
+
+    argv = _run_argv(config, "debian13", tmp_path / "results")
+
+    label_flag = argv.index("--label")
+    assert argv[label_flag + 1] == f"{OWNERSHIP_LABEL}={config.image_prefix}"

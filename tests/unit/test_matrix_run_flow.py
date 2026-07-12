@@ -6,7 +6,8 @@
 [`runner`][terok_util.matrix.runner] is exercised against a recorded
 ``subprocess.run``; [`cli`][terok_util.matrix.cli] against stubbed runner
 functions — between them every orchestration branch (pass, fail, skip,
-build failure, prune, keyring warning) runs without a container host.
+build failure, teardown, interrupt, keyring warning) runs without a
+container host.
 """
 
 from __future__ import annotations
@@ -25,15 +26,16 @@ from unit.matrix_fixtures import load_fixture, write_config
 class RecordedRun:
     """Stand-in for ``subprocess.run`` that records argv and scripts a result."""
 
-    def __init__(self, returncode: int = 0, stdout: str = "") -> None:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
         self.returncode = returncode
         self.stdout = stdout
+        self.stderr = stderr
         self.calls: list[list[str]] = []
 
     def __call__(self, argv: list[str], **_kwargs: Any) -> SimpleNamespace:
         """Record the argv and return the scripted completed process."""
         self.calls.append(list(argv))
-        return SimpleNamespace(returncode=self.returncode, stdout=self.stdout)
+        return SimpleNamespace(returncode=self.returncode, stdout=self.stdout, stderr=self.stderr)
 
 
 # ── runner: build / run / prune ────────────────────────────────────
@@ -135,6 +137,86 @@ def test_prune_without_niceness_tools(tmp_path: Path, monkeypatch: pytest.Monkey
     assert recorded.calls[0][0] == "podman"
 
 
+def test_prune_failure_surfaces_stderr_not_an_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failing prune warns with stderr's gist — a leak reported beats one hidden."""
+    config = load_fixture(tmp_path)
+    recorded = RecordedRun(returncode=125, stderr="Error: layer store exploded\n")
+    monkeypatch.setattr(runner.subprocess, "run", recorded)
+    monkeypatch.setattr(runner, "which", lambda cmd: None)
+
+    assert runner.prune_dangling(config) == 0
+
+    err = capsys.readouterr().err
+    assert "WARNING: image prune failed" in err
+    assert "layer store exploded" in err
+
+
+def test_prune_blocked_by_external_container_names_the_cure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The 'image is in use' case points at superbuild's matrix-clean."""
+    config = load_fixture(tmp_path)
+    stderr = "Error: image used by 1234abcd: image is in use by a container: consider force removal"
+    monkeypatch.setattr(runner.subprocess, "run", RecordedRun(returncode=125, stderr=stderr))
+    monkeypatch.setattr(runner, "which", lambda cmd: None)
+
+    assert runner.prune_dangling(config) == 0
+
+    err = capsys.readouterr().err
+    assert "external (buildah) build leftover" in err
+    assert "superbuild's matrix-clean" in err
+
+
+# ── runner: teardown sweep ─────────────────────────────────────────
+
+
+def test_sweep_removes_only_this_harness_containers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep lists by ownership label and force-removes what it finds."""
+    config = load_fixture(tmp_path)
+    recorded = RecordedRun(stdout="id1\nid2\n")
+    monkeypatch.setattr(runner.subprocess, "run", recorded)
+
+    assert runner.sweep_containers(config) == 2
+
+    listing, removal = recorded.calls
+    assert listing[:3] == ["podman", "ps", "-aq"]
+    assert "label=io.terok.matrix-test=terok-fixture-test" in listing
+    assert removal == ["podman", "rm", "-f", "-t", "0", "id1", "id2"]
+
+
+def test_sweep_with_nothing_leftover_skips_the_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clean host means one listing call and no ``podman rm``."""
+    config = load_fixture(tmp_path)
+    recorded = RecordedRun(stdout="")
+    monkeypatch.setattr(runner.subprocess, "run", recorded)
+
+    assert runner.sweep_containers(config) == 0
+
+    assert len(recorded.calls) == 1
+
+
+def test_external_storage_leftovers_are_named_not_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only storage-state externals are reported; nothing gets an rm call."""
+    recorded = RecordedRun(
+        stdout="abc123 storage terok-util-buildah\ndef456 running unrelated-service\n"
+    )
+    monkeypatch.setattr(runner.subprocess, "run", recorded)
+
+    assert runner.external_storage_leftovers() == ["terok-util-buildah"]
+
+    (listing,) = recorded.calls
+    assert listing[:2] == ["podman", "ps"]
+    assert "--external" in listing
+
+
 # ── cli: the matrix walk ───────────────────────────────────────────
 
 
@@ -145,6 +227,8 @@ def stubbed_host(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "built": [],
         "ran": [],
         "pruned": 0,
+        "swept": 0,
+        "external": [],
         "fail_build": set(),
         "fail_run": set(),
     }
@@ -162,9 +246,15 @@ def stubbed_host(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         journal["pruned"] += 1
         return 3
 
+    def fake_sweep(config: Any) -> int:
+        journal["swept"] += 1
+        return 0
+
     monkeypatch.setattr(cli, "build_image", fake_build)
     monkeypatch.setattr(cli, "run_slot", fake_run)
     monkeypatch.setattr(cli, "prune_dangling", fake_prune)
+    monkeypatch.setattr(cli, "sweep_containers", fake_sweep)
+    monkeypatch.setattr(cli, "external_storage_leftovers", lambda: journal["external"])
     monkeypatch.setenv("CONTAINERS_CONF", "/nonexistent/containers.conf")
     return journal
 
@@ -241,21 +331,21 @@ def test_walk_records_build_failures_and_keeps_going(
     assert "FAIL (image build failed)" in capsys.readouterr().err
 
 
-def test_build_only_stops_after_images(
+def test_build_only_still_prunes_the_retagged_generations(
     tmp_path: Path,
     stubbed_host: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--build-only builds and exits; nothing runs, nothing prunes."""
+    """--build-only runs nothing — but it retags images, so teardown still owes a prune."""
     monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
 
     assert cli.main(_args(tmp_path, "--build-only")) == 0
 
     assert stubbed_host["ran"] == []
-    assert stubbed_host["pruned"] == 0
+    assert stubbed_host["pruned"] == 1
 
 
-def test_keep_dangling_skips_the_prune(
+def test_keep_dangling_skips_the_teardown(
     tmp_path: Path,
     stubbed_host: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -266,6 +356,45 @@ def test_keep_dangling_skips_the_prune(
     assert cli.main(_args(tmp_path, "--keep-dangling")) == 0
 
     assert stubbed_host["pruned"] == 0
+    assert stubbed_host["swept"] == 0
+
+
+def test_interrupt_still_tears_down_and_exits_130(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ctrl-C mid-walk sweeps and prunes anyway — the 40-80 GB stranding path."""
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+
+    def interrupted(*_args: Any, **_kwargs: Any) -> runner.SlotResult:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "run_slot", interrupted)
+
+    assert cli.main(_args(tmp_path)) == 130
+
+    assert stubbed_host["swept"] == 1
+    assert stubbed_host["pruned"] == 1
+    assert "Interrupted" in capsys.readouterr().err
+
+
+def test_teardown_names_external_storage_leftovers(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """buildah leftovers are named with a pointer to superbuild, never removed here."""
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+    stubbed_host["external"].append("terok-util-buildah")
+
+    assert cli.main(_args(tmp_path)) == 0
+
+    err = capsys.readouterr().err
+    assert "terok-util-buildah" in err
+    assert "superbuild's matrix-clean" in err
 
 
 def test_version_mismatch_is_a_warning_not_a_failure(
@@ -463,6 +592,8 @@ def test_matrix_parallel_jobs_tags_lines_and_keeps_the_summary(
     monkeypatch.setattr(cli, "run_slot", fake_run_slot)
     monkeypatch.setattr(cli, "_build_images", lambda *a, **k: set())
     monkeypatch.setattr(cli, "prune_dangling", lambda config: 0)
+    monkeypatch.setattr(cli, "sweep_containers", lambda config: 0)
+    monkeypatch.setattr(cli, "external_storage_leftovers", lambda: [])
     monkeypatch.setattr(cli, "_skip_reason", lambda config, name: "")
 
     rc = cli.main(["--config", str(tmp_path / "tests" / "containers" / "matrix.yml"), "-j", "3"])

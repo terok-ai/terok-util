@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Host-side slot execution — image assembly, build, run, prune.
+"""Host-side slot execution — image assembly, build, run, teardown.
 
 The shared Containerfile templates ship inside this package; a consuming
 repo customises them declaratively (``extra-packages`` becomes the
@@ -129,11 +129,66 @@ def run_slot(
     return SlotResult(passed=status == 0, observed=_observed_version(slot_name, results_dir))
 
 
+# ── Teardown ───────────────────────────────────────────────────────
+#
+# Every rebuild retags the per-slot image, untagging the previous
+# multi-GB generation — so by the end of any run the old generations are
+# dangling, and only teardown stands between them and stranded disk.
+
+# Leftover run containers are dead test containers; no stop grace period
+# is owed before the kill.
+_REMOVAL_GRACE_SECONDS = "0"
+
+# podman's phrasing when a dangling image is pinned by a container this
+# engine does not own (typically a buildah leftover of an interrupted
+# ``podman build``).
+_IMAGE_IN_USE_MARKER = "in use by a container"
+
+# One line per external container: id, state, name — enough to name the
+# storage-state leftovers in a warning.
+_EXTERNAL_PS_FORMAT = "{{.ID}} {{.State}} {{.Names}}"
+
+# The state podman reports for external (buildah) containers: storage
+# with no runtime, silently pinning the image layers underneath.
+_EXTERNAL_STORAGE_STATE = "storage"
+
+
+def sweep_containers(config: MatrixConfig) -> int:
+    """Remove leftover run containers owned by this harness.
+
+    ``podman run --rm`` cleans up after itself — but an interrupted run
+    leaves the container behind, and a leftover container pins its (by
+    then dangling) image generation, immune to any prune.  The sweep is
+    what lets the prune that follows actually reclaim the bytes.
+
+    Returns:
+        The number of containers removed.
+    """
+    listing = subprocess.run(  # nosec B603
+        ["podman", "ps", "-aq", "--filter", f"label={OWNERSHIP_LABEL}={config.image_prefix}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    container_ids = listing.stdout.split()
+    if not container_ids:
+        return 0
+    subprocess.run(  # nosec B603
+        ["podman", "rm", "-f", "-t", _REMOVAL_GRACE_SECONDS, *container_ids],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return len(container_ids)
+
+
 def prune_dangling(config: MatrixConfig) -> int:
     """Prune dangling generations of exactly this harness's images.
 
     Idle CPU/IO priority when available — small per-run increments instead
-    of an hours-long backlog.  Returns the number of pruned image records.
+    of an hours-long backlog.  A failed prune is warned about, never
+    raised: teardown must always run to completion.  Returns the number
+    of pruned image records.
     """
     argv = [
         "podman",
@@ -147,7 +202,45 @@ def prune_dangling(config: MatrixConfig) -> int:
         if which(wrapper[0]):
             argv = wrapper + argv
     pruned = subprocess.run(argv, check=False, capture_output=True, text=True)  # nosec B603
+    if pruned.returncode != 0:
+        _warn_prune_failure(pruned.stderr)
     return len(pruned.stdout.splitlines())
+
+
+def external_storage_leftovers() -> list[str]:
+    """Name the external (buildah) containers stuck holding storage.
+
+    These pin dangling image layers but were not created by this engine —
+    removing them here could tear a live ``podman build`` out from under
+    another process, so recovery is superbuild's job; the CLI only names
+    them.  Returns the container names (or ids, for nameless entries).
+    """
+    listing = subprocess.run(  # nosec B603
+        ["podman", "ps", "-a", "--external", "--format", _EXTERNAL_PS_FORMAT],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    leftovers = []
+    for line in listing.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[1].lower() == _EXTERNAL_STORAGE_STATE:
+            leftovers.append(sanitize_tty(fields[2] if len(fields) > 2 else fields[0]))
+    return leftovers
+
+
+def _warn_prune_failure(stderr: str) -> None:
+    """One line saying why the prune failed — silence is how leaks last years."""
+    if _IMAGE_IN_USE_MARKER in stderr:
+        print(
+            "WARNING: prune blocked by an external (buildah) build leftover"
+            " — run superbuild's matrix-clean",
+            file=sys.stderr,
+        )
+        return
+    lines = [line for line in stderr.strip().splitlines() if line.strip()]
+    gist = sanitize_tty(lines[-1]) if lines else "no error output"
+    print(f"WARNING: image prune failed: {gist}", file=sys.stderr)
 
 
 # ── Assembly details ───────────────────────────────────────────────
@@ -171,6 +264,11 @@ def _run_argv(config: MatrixConfig, slot_name: str, results_dir: Path) -> list[s
         "--replace",
         "--name",
         f"{config.image_prefix}-{slot_name}",
+        # The image already carries the ownership label, but the teardown
+        # sweep must find leftover containers even when label inheritance
+        # doesn't apply — so the run stamps it explicitly too.
+        "--label",
+        f"{OWNERSHIP_LABEL}={config.image_prefix}",
         "-e",
         "TERM=xterm",
     ]

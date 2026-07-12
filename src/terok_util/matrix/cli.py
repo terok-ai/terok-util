@@ -6,8 +6,13 @@
 The operator-facing entry point: load the repo's ``matrix.yml``, then
 walk the selected slots — build every image first (a failed build is recorded, not
 fatal, so one run surfaces every distro's problems), run each slot's test
-container, and close with the classic PASS/SKIP/FAIL summary and the
-dangling-layer prune.
+container, and close with the classic PASS/SKIP/FAIL summary.
+
+Teardown (sweep leftover containers, prune dangling image generations)
+runs however the walk ends — failure, ``--build-only``, Ctrl-C.  Every
+rebuild retags the slot images, so a walk that skips teardown strands
+the previous multi-GB generation of the whole fleet; only
+``--keep-dangling`` opts out, deliberately.
 
 ``--slots-json`` exists for CI: a workflow derives its ``strategy.matrix``
 from the same ``matrix.yml`` the local runs use, so the slot list has a
@@ -27,9 +32,19 @@ from pathlib import Path
 
 from .catalog import SLOTS, SlotKind
 from .config import MatrixConfig, MatrixConfigError, load_config
-from .runner import SlotResult, build_image, prune_dangling, run_slot
+from .runner import (
+    SlotResult,
+    build_image,
+    external_storage_leftovers,
+    prune_dangling,
+    run_slot,
+    sweep_containers,
+)
 
 DEFAULT_CONFIG = Path("tests/containers/matrix.yml")
+
+# 128 + SIGINT: the conventional exit code of an interrupted run.
+EXIT_INTERRUPTED = 130
 
 # ── Terminal colors (disabled when stdout is not a tty) ────────────
 
@@ -48,7 +63,7 @@ RESET = "\033[0m" if _TTY else ""
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the matrix; the exit code is 1 when any slot failed."""
+    """Run the matrix; exit 1 when any slot failed, 130 after a Ctrl-C."""
     args = _parse_args(argv)
     try:
         config = load_config(args.config)
@@ -98,7 +113,47 @@ def main(argv: list[str] | None = None) -> int:
 def _run_matrix(
     config: MatrixConfig, targets: list[str], args: argparse.Namespace, results_dir: Path
 ) -> int:
-    """Build all images, run all runnable slots, summarise, prune."""
+    """Walk the matrix with teardown guaranteed, interrupted runs included.
+
+    ``--build-only`` and Ctrl-C untag the previous image generations just
+    as surely as a full run does, so both still owe the teardown — the
+    ``finally`` is what keeps an interrupted fleet run from stranding
+    tens of GB of dangling layers.
+    """
+    try:
+        return _walk_matrix(config, targets, args, results_dir)
+    except KeyboardInterrupt:
+        print(f"\n{YELLOW}Interrupted — tearing down.{RESET}", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    finally:
+        if not args.keep_dangling:
+            _teardown(config)
+
+
+def _teardown(config: MatrixConfig) -> None:
+    """Sweep leftover run containers, prune dangling images, name what's stuck.
+
+    Containers first: a leftover container pins its image generation, so
+    the sweep is what makes the prune effective.  External (buildah)
+    leftovers are only named — they belong to whoever created them, and
+    recovery is superbuild's job.
+    """
+    if swept := sweep_containers(config):
+        print(f"\n{DIM}removed {swept} leftover matrix container(s){RESET}")
+    print(f"\n{DIM}Pruning this harness's dangling image generations (idle io)...{RESET}")
+    print(f"{DIM}pruned {prune_dangling(config)} image record(s){RESET}")
+    if stuck := external_storage_leftovers():
+        print(
+            f"{YELLOW}WARNING: external container(s) holding storage: {', '.join(stuck)}\n"
+            f"  Not this engine's to remove — run superbuild's matrix-clean to recover.{RESET}",
+            file=sys.stderr,
+        )
+
+
+def _walk_matrix(
+    config: MatrixConfig, targets: list[str], args: argparse.Namespace, results_dir: Path
+) -> int:
+    """Build all images, run all runnable slots, summarise."""
     build_failed = _build_images(config, targets, results_dir, no_cache=args.no_cache)
     if args.build_only:
         print(f"{GREEN}Images built.{RESET} Run without --build-only to run tests.")
@@ -135,9 +190,6 @@ def _run_matrix(
         (passed if results[name].passed else failed).append(name)
 
     _print_summary(config, passed, skipped, failed, observed)
-    if not args.keep_dangling:
-        print(f"\n{DIM}Pruning this harness's dangling image generations (idle io)...{RESET}")
-        print(f"{DIM}pruned {prune_dangling(config)} image record(s){RESET}")
     return 1 if failed else 0
 
 
