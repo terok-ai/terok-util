@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+#
+# Multi-distro integration test matrix on the self-hosted runner.
+# Thin caller: the jobs live in this repo's own reusable
+# fleet-test-matrix.yml (pinned to a released tag, like every other
+# consumer — the matrix engine tests itself with a shipped engine, not
+# with the working tree); the slot list is derived from
+# tests/containers/matrix.yml via `terok-matrix --slots-json`.
+name: Test Matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      slots:
+        description: Space-separated slot subset (default = all declared)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    uses: terok-ai/terok-util/.github/workflows/fleet-test-matrix.yml@v0.3.0a7
+    with:
+      slots: ${{ inputs.slots }}

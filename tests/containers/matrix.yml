@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+#
+# Multi-distro test matrix for terok-util — declarative input to this
+# repo's own engine.  Run with `uv run terok-matrix` from the repo root
+# (or `make test-matrix`).
+#
+# terok-util is a pure library: no podman, no D-Bus, no network.  Its
+# integration tests reach for the kernel (/proc/self/uid_map, umask,
+# DAC), the uid, and the interpreter — nothing a container has to be
+# built for.  So it takes the light `dbus` image flavor purely because
+# that is the cheap one; the bus itself goes unused, and `expect:` is
+# correspondingly empty.  Running the engine's *own* podman flavor here
+# would build a podman-in-podman image to test a library that never
+# shells out to podman.
+#
+# The slot list is the full dbus-flavor set, plus `nix` (whose kind
+# overrides the flavor with the nix Containerfile) — a distro that
+# wraps Python or ships an odd platformdirs is exactly the falsifier
+# these tests exist for.
+
+image-prefix: terok-util-test
+flavor: dbus
+expect: []
+groups: [test]
+
+slots:
+  debian12:
+  ubuntu2404:
+  ubuntu2604:
+  debian13:
+  fedora43:
+  fedora44:
+  podman:
+  alpine:
+  void:
+  mageia:
+  nix:
+
+phases:
+  - name: unit tests
+    scope: unit
+    pytest: tests/unit/ -v --tb=short
+  - name: integration tests
+    scope: integ
+    pytest: tests/integration/ -v --tb=short

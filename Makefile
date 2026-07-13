@@ -1,9 +1,10 @@
-.PHONY: all lint format test test-unit test-fast ruff-report bandit-report sonar-inputs tach security docstrings complexity deadcode reuse typecheck check install install-dev docs docs-build clean spdx
+.PHONY: all lint format test test-unit test-fast test-integration test-matrix ruff-report bandit-report sonar-inputs tach security docstrings complexity deadcode reuse typecheck check install install-dev docs docs-build clean spdx
 
 REPORTS_DIR ?= reports
 COVERAGE_XML ?= $(REPORTS_DIR)/coverage.xml
 COVERAGE_JSON ?= $(REPORTS_DIR)/coverage.json
 UNIT_JUNIT_XML ?= $(REPORTS_DIR)/unit.junit.xml
+INTEGRATION_JUNIT_XML ?= $(REPORTS_DIR)/integration.junit.xml
 RUFF_REPORT ?= $(REPORTS_DIR)/ruff-report.json
 BANDIT_REPORT ?= $(REPORTS_DIR)/bandit-report.json
 
@@ -35,6 +36,35 @@ test-fast:
 test-unit:
 	mkdir -p $(REPORTS_DIR)
 	uv run pytest tests/unit/ --cov=terok_util --cov-report=term-missing --cov-report=xml:$(COVERAGE_XML) --cov-report=json:$(COVERAGE_JSON) --junitxml=$(UNIT_JUNIT_XML) -o junit_family=legacy
+
+# Deep-reach integration tests — kernel surfaces, real uids, a fresh
+# interpreter.  No podman, no network: they run anywhere pytest does,
+# and skip the branch (root / non-root) this host cannot be.
+test-integration:
+	mkdir -p $(REPORTS_DIR)
+	uv run pytest tests/integration/ -v --junitxml=$(INTEGRATION_JUNIT_XML) -o junit_family=legacy
+
+# Multi-distro test matrix — slots declared in tests/containers/matrix.yml,
+# engine provided by this very package (terok-matrix).
+# Options (env vars):
+#   NO_CACHE=1    Rebuild images from scratch (ignore layer cache)
+#   BUILD_ONLY=1  Build images without running tests
+#   SCOPE=unit    Run only unit tests (or: integ)
+#   SLOTS="fedora43 debian13"  Run specific slots only
+#   JOBS=4        Run up to N slots concurrently (live output, [slot]-tagged lines)
+# `make -j 4 test-matrix` works too: GNU make >= 4.3 exposes -jN in MAKEFLAGS,
+# and JOBS defaults to it.  An explicit JOBS= always wins; bare -j (unlimited)
+# carries no number and falls back to serial.
+MAKE_JOBS = $(patsubst -j%,%,$(filter -j%,$(MAKEFLAGS)))
+JOBS ?= $(MAKE_JOBS)
+test-matrix:
+	uv run terok-matrix \
+		$(if $(NO_CACHE),--no-cache) \
+		$(if $(BUILD_ONLY),--build-only) \
+		$(if $(filter unit,$(SCOPE)),--unit-only) \
+		$(if $(filter integ,$(SCOPE)),--integ-only) \
+		$(if $(JOBS),--jobs $(JOBS)) \
+		$(SLOTS)
 
 # Write Ruff's JSON report without failing on findings.
 ruff-report:
