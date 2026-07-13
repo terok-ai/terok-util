@@ -87,10 +87,10 @@ def host_uid() -> int:
 
     That makes this the wrong question to ask about privilege: a ``0`` here
     says "some ancestor namespace calls me root", not "I can write
-    ``/etc``".  Use ``os.geteuid()`` for that (see
-    [`_is_root`][terok_util.paths._is_root]).  What this *is* right for is
-    what it was written for: telling a peer outside our namespace which UID
-    it will see us as (D-Bus ``SO_PEERCRED`` / ``AUTH EXTERNAL``).
+    ``/etc``".  Privilege is decided by ``_is_root()`` instead, which asks
+    whether uid 0 is held in the *initial* namespace.  What this *is* right
+    for is what it was written for: telling a peer outside our namespace
+    which UID it will see us as (D-Bus ``SO_PEERCRED`` / ``AUTH EXTERNAL``).
     """
     try:
         euid = os.geteuid()

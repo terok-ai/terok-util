@@ -384,6 +384,84 @@ class TestIsRootNamespaceAware:
         assert _is_root() is False
 
 
+class TestInitialUserNamespace:
+    """``_in_initial_userns`` — the identity map, and nothing else, is initial."""
+
+    _redirect_uid_map = staticmethod(TestIsRootNamespaceAware._redirect_uid_map)
+
+    def test_identity_map_is_the_initial_namespace(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The full uid_t range mapped 1:1 is what only the initial ns carries."""
+        from terok_util.paths import _in_initial_userns
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("         0          0 4294967295\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        assert _in_initial_userns() is True
+
+    def test_a_mapped_slice_is_not(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Rootless podman's map: inner 0 is the operator, not the initial root."""
+        from terok_util.paths import _in_initial_userns
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("         0       1000          1\n         1     100000      65536\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        assert _in_initial_userns() is False
+
+    def test_keep_id_nesting_is_not(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """--userns=keep-id: an unprivileged uid that maps to 0 -- the bug's shape."""
+        from terok_util.paths import _in_initial_userns
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("      1000          0          1\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        assert _in_initial_userns() is False
+
+    def test_missing_uid_map_means_no_user_namespaces(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """No uid_map at all (non-Linux, exotic chroot) is the initial ns by definition."""
+        from terok_util.paths import _in_initial_userns
+
+        self._redirect_uid_map(monkeypatch, tmp_path / "does-not-exist")
+        assert _in_initial_userns() is True
+
+
+class TestIsRootUnderNesting:
+    """The bug this fix closes: a mapped 0 is not privilege."""
+
+    _redirect_uid_map = staticmethod(TestIsRootNamespaceAware._redirect_uid_map)
+
+    def test_keep_id_unprivileged_is_not_root(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """uid 1000 whose map translates it to 0 must not take the root branch.
+
+        This is the agent-container shape.  ``host_uid()`` reports 0 here --
+        legitimately, it is the parent's view -- and the old ``_is_root``
+        believed it, sending state to an unwritable ``/var/lib/terok``.
+        """
+        from terok_util.paths import _is_root, host_uid
+
+        uid_map = tmp_path / "uid_map"
+        uid_map.write_text("      1000          0          1\n")
+        self._redirect_uid_map(monkeypatch, uid_map)
+        monkeypatch.setattr("os.geteuid", lambda: 1000)
+        assert host_uid() == 0  # the translation that fooled the old check
+        assert _is_root() is False
+
+    def test_missing_uid_map_root_is_root(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Without user namespaces, uid 0 is simply root."""
+        from terok_util.paths import _is_root
+
+        self._redirect_uid_map(monkeypatch, tmp_path / "does-not-exist")
+        monkeypatch.setattr("os.geteuid", lambda: 0)
+        assert _is_root() is True
+
+
 class TestHostUidNamespaceAware:
     """``host_uid`` returns the kernel-visible (initial-userns) UID.
 
