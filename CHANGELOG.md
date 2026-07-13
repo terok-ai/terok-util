@@ -36,6 +36,15 @@ release scope (Tier 1 + Tier 2 per
   that lived in `terok`).
 - `podman` — `podman_userns_args`. Rootless `--userns=keep-id`
   builder.
+## v0.3.0 — Past Prologue
+
+Port from poetry to uv.
+Provide reuseable static analysis workflows.
+Multiple integration test matrix fixes.
+API lazyfication for faster startup.
+
+**Full Changelog**: https://github.com/terok-ai/terok-util/compare/v0.2.1...v0.3.0
+
 ## v0.2.1 — The Celestial Temple
 
 Shared multi-distro test-matrix engine + terok-matrix CLI, https://github.com/terok-ai/terok-util/pull/31
