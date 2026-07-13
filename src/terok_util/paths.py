@@ -55,8 +55,13 @@ _config_section_cache: dict[str, dict[str, str]] = {}
 _config_top_level_cache: dict[str, object | None] = {}
 
 
+#: The identity map's length — 2**32 - 1, the whole uid_t range.  Only the
+#: initial user namespace carries it; every nested namespace maps a slice.
+_UID_T_MAX = 4294967295
+
+
 def host_uid() -> int:
-    """Return the current process's UID as the initial user namespace sees it.
+    """Return this process's UID as its *parent* user namespace sees it.
 
     Inside an unprivileged user namespace (rootless ``podman`` / ``crun``
     hook, sandboxed CI runner, ``unshare -U``), ``os.geteuid()`` returns
@@ -72,6 +77,20 @@ def host_uid() -> int:
     unavailable (macOS, BSD, exotic chroot) or no row covers the
     effective UID, the bare ``geteuid()`` answer is returned — correct on
     systems without Linux user namespaces.
+
+    One hop, not all of them.  ``uid_map``'s second column is a UID in the
+    **parent** user namespace (``user_namespaces(7)``), which equals the
+    initial namespace only at a single level of nesting.  Rootless podman's
+    ``--userns=keep-id`` — how terok runs agent containers — nests twice, so
+    an unprivileged process there translates to ``0``: the parent's view,
+    not the host's.
+
+    That makes this the wrong question to ask about privilege: a ``0`` here
+    says "some ancestor namespace calls me root", not "I can write
+    ``/etc``".  Use ``os.geteuid()`` for that (see
+    [`_is_root`][terok_util.paths._is_root]).  What this *is* right for is
+    what it was written for: telling a peer outside our namespace which UID
+    it will see us as (D-Bus ``SO_PEERCRED`` / ``AUTH EXTERNAL``).
     """
     try:
         euid = os.geteuid()
@@ -94,16 +113,48 @@ def host_uid() -> int:
     return euid
 
 
-def _is_root() -> bool:
-    """Return True only if this is *real* root in the initial user namespace.
+def _in_initial_userns() -> bool:
+    """Whether this process runs in the initial user namespace.
 
-    Delegates to [`host_uid`][terok_util.paths.host_uid] — the kernel-visible
-    UID is the only honest answer to "are we root?" once user namespaces
-    enter the picture.  ``os.geteuid() == 0`` lies for rootless containers
-    (the operator's host UID 1000 maps to inner 0); ``host_uid() == 0``
-    tells the truth.
+    That namespace is the one with the full identity map; every namespace
+    created since maps a slice of it.  A missing ``uid_map`` means the
+    kernel has no user namespaces at all (or is not Linux), which is the
+    initial namespace by definition.
     """
-    return host_uid() == 0
+    try:
+        with open("/proc/self/uid_map", encoding="ascii") as fh:
+            rows = [line.split() for line in fh if line.split()]
+    except OSError:
+        return True
+    return rows == [["0", "0", str(_UID_T_MAX)]]
+
+
+def _is_root() -> bool:
+    """Return True only for root that can actually write the FHS tree.
+
+    Two ways to hold uid 0 without that power, and terok meets both:
+
+    * an **OCI hook** under rootless podman runs with the operator's UID
+      mapped to inner 0, but in the *host's* mount namespace — so
+      ``/var/lib`` there is the host's, and the operator (really uid 1000)
+      cannot write it;
+    * a process in an **agent container** runs unprivileged (uid 1000),
+      yet ``--userns=keep-id``'s nested map translates it to 0.
+
+    So neither ``geteuid()`` nor [`host_uid`][terok_util.paths.host_uid]
+    settles it alone: real root is uid 0 *in the initial namespace*.  This
+    used to delegate to ``host_uid()``, which answers a different question
+    entirely — what a peer outside our namespace sees — and thereby handed
+    the second case a root verdict: every resolver took the root branch,
+    ignored ``XDG_*``, and aimed state at an unwritable ``/var/lib/terok``.
+    That is the mechanism behind the ten terok-shield unit tests that
+    failed inside terok's own containers.
+    """
+    try:
+        euid = os.geteuid()
+    except AttributeError:  # pragma: no cover — non-POSIX
+        return getpass.getuser() == "root"
+    return euid == 0 and _in_initial_userns()
 
 
 def config_file_paths() -> list[tuple[str, Path]]:

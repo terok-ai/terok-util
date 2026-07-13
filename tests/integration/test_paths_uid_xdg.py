@@ -13,14 +13,19 @@ falsify any of that — only a real ``/proc/self/uid_map`` can, and what
 it contains depends on the distro, the container runtime, and how many
 user namespaces the process is nested inside.
 
-The uncomfortable finding this module pins down: under a *nested* user
-namespace — the shape rootless podman's ``--userns=keep-id`` produces,
-which is exactly how terok runs its agent containers — an unprivileged
-process gets ``host_uid() == 0``.  The resolvers then take the root
-branch and ignore ``XDG_*`` entirely, which is what defeats XDG-based
-test isolation for every sibling package.  The tests that would fail on
-that are marked ``xfail`` rather than quietly skipped: the behaviour is
-wrong, we know it is wrong, and the marker is the record.
+These tests pinned down a real bug, and now guard its fix.  Under a
+*nested* user namespace — the shape rootless podman's ``--userns=keep-id``
+produces, which is exactly how terok runs its agent containers — an
+unprivileged process still gets ``host_uid() == 0``: ``uid_map``'s second
+column is a UID in the **parent** namespace, and one hop is all a process
+can see from the inside.  That is a fact of the kernel, not a defect.
+
+The defect was asking that helper about *privilege*.  ``_is_root()`` used
+to, so every resolver took the root branch inside terok's own containers,
+ignored ``XDG_*``, and aimed state at an unwritable ``/var/lib/terok`` —
+the mechanism behind the ten terok-shield unit tests that failed there.
+``_is_root()`` now asks ``geteuid()``, which answers the question the
+resolvers actually have: is this filesystem's ``/etc`` mine to write?
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ import os
 
 import pytest
 
-from terok_util.paths import host_uid
+from terok_util.paths import _is_root, host_uid
 
 from .constants import (
     FHS_CONFIG_DIR,
@@ -79,16 +84,6 @@ RUNNING_AS_ROOT = PROCESS_UID == 0
 #: plain (single-level) rootless container.
 HOST_UID_CLAIMS_ROOT = not RUNNING_AS_ROOT and host_uid() == 0
 
-_XDG_ISOLATION_DEFEATED = pytest.mark.xfail(
-    HOST_UID_CLAIMS_ROOT,
-    reason=(
-        "known bug: under a nested user namespace /proc/self/uid_map's second "
-        "column is the *parent* userns, not the initial one, so host_uid() "
-        "reports 0 for an unprivileged process and every resolver takes the "
-        "root branch, ignoring XDG_*"
-    ),
-    strict=False,
-)
 
 _needs_unprivileged = pytest.mark.skipif(
     RUNNING_AS_ROOT, reason="asserts the non-root branch; this process is uid 0"
@@ -147,20 +142,18 @@ def test_host_uid_is_geteuid_in_the_initial_userns() -> None:
 
 
 @_needs_unprivileged
-@_XDG_ISOLATION_DEFEATED
-def test_unprivileged_process_is_not_reported_as_root() -> None:
-    """An operator who is not root must never be handed uid 0.
+def test_privilege_does_not_ride_on_the_namespace_translation() -> None:
+    """An unprivileged process is never treated as root — whatever the map says.
 
-    This is the contract every caller of
-    [`host_uid`][terok_util.paths.host_uid] actually relies on — the
-    resolvers, and the ``AUTH EXTERNAL`` peer credentials the helper was
-    written for.  It holds on a bare host and in a single-level rootless
-    container; it fails under nesting, where the map's second column is
-    a parent-userns uid rather than an initial-userns one.  Non-strict
-    xfail: the same test must stay green on the hosts where the bug does
-    not bite, and turn red the day someone fixes the nested case.
+    ``host_uid()`` may legitimately report 0 here: under nesting it hands
+    back the *parent* namespace's view, and a process cannot see past one
+    hop.  What must never happen again is a privilege decision resting on
+    that number — which is precisely how the resolvers ended up writing to
+    ``/var/lib`` inside a container where they could not.
     """
-    assert host_uid() != 0, f"geteuid()={PROCESS_UID} but host_uid()=0; uid_map rows={UID_MAP_ROWS}"
+    assert _is_root() is False, (
+        f"geteuid()={PROCESS_UID}, host_uid()={host_uid()}, uid_map rows={UID_MAP_ROWS}"
+    )
 
 
 # ── The blast radius: which directories the resolvers pick ─────────────
@@ -193,7 +186,6 @@ def test_root_lands_on_fhs_paths_and_ignores_xdg(child_json, tmp_path) -> None:
 
 
 @_needs_unprivileged
-@_XDG_ISOLATION_DEFEATED
 def test_unprivileged_honours_the_xdg_chain(child_json, tmp_path) -> None:
     """XDG_* redirects config, state and runtime for a non-root process.
 
@@ -226,7 +218,6 @@ def test_unprivileged_honours_the_xdg_chain(child_json, tmp_path) -> None:
 
 
 @_needs_unprivileged
-@_XDG_ISOLATION_DEFEATED
 def test_unprivileged_falls_back_to_home_without_xdg(child_json, tmp_path) -> None:
     """With no XDG_* exported, a non-root process falls back under $HOME.
 
