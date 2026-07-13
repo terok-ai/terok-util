@@ -16,6 +16,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,6 +24,20 @@ from terok_util import hardening
 from terok_util.hardening import HardeningReport, harden_self
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="hardening floor is Linux-only")
+
+
+class _FakeLibc:
+    """A libc stand-in whose prctl/mlockall return preset codes (no real syscall)."""
+
+    def __init__(self, *, prctl_rc: int = 0, mlockall_rc: int = 0) -> None:
+        self._prctl_rc = prctl_rc
+        self._mlockall_rc = mlockall_rc
+
+    def prctl(self, *_args: int) -> int:
+        return self._prctl_rc
+
+    def mlockall(self, *_args: int) -> int:
+        return self._mlockall_rc
 
 
 def test_real_syscalls_take_effect() -> None:
@@ -80,3 +95,41 @@ class TestHardeningReport:
     ) -> None:
         report = HardeningReport(no_dump=no_dump, no_core=no_core, memory_locked=memory_locked)
         assert not report.fully_hardened
+
+
+class TestHelpersInProcess:
+    """Cover the syscall helpers in-process (the real-syscall path runs in a subprocess).
+
+    The subprocess test proves the syscalls actually take; these mock libc
+    so the branch/return logic is measured without touching the runner's
+    real dumpable flag or locking its memory.
+    """
+
+    def test_libc_returns_a_usable_handle(self) -> None:
+        handle = hardening._libc()
+        assert handle is None or hasattr(handle, "prctl")
+
+    def test_libc_is_none_when_cdll_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(hardening.ctypes, "CDLL", MagicMock(side_effect=OSError))
+        assert hardening._libc() is None
+
+    def test_clear_dumpable(self) -> None:
+        assert hardening._clear_dumpable(None) is False
+        assert hardening._clear_dumpable(_FakeLibc(prctl_rc=0)) is True
+        assert hardening._clear_dumpable(_FakeLibc(prctl_rc=-1)) is False
+
+    def test_lock_memory(self) -> None:
+        assert hardening._lock_memory(None) is False
+        assert hardening._lock_memory(_FakeLibc(mlockall_rc=0)) is True
+        assert hardening._lock_memory(_FakeLibc(mlockall_rc=-1)) is False
+
+    def test_zero_core_limit_reports_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(hardening.resource, "setrlimit", MagicMock(side_effect=ValueError))
+        assert hardening._zero_core_limit() is False
+
+    def test_harden_self_full_with_capable_libc(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With a libc whose calls succeed, all three guarantees report taken."""
+        monkeypatch.setattr(hardening, "_libc", lambda: _FakeLibc(prctl_rc=0, mlockall_rc=0))
+        report = harden_self()
+        assert report == HardeningReport(no_dump=True, no_core=True, memory_locked=True)
+        assert report.fully_hardened
