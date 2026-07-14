@@ -23,14 +23,10 @@ starts, before it opens anything sensitive:
   never raised.
 
 [`harden_self`][terok_util.hardening.harden_self] applies all three to
-the *current* process and returns a [`HardeningReport`][terok_util.hardening.HardeningReport]
-of what actually took.  It is the floor every isolated child process
-(terok-sandbox's split supervisor children) calls at start-up, before
-per-service seccomp / Landlock profiles narrow things further.
-
-Linux-only by construction — the primitives are Linux syscalls.  On any
-other platform (or a kernel that lacks one) the corresponding field
-comes back ``False`` and nothing raises.
+the current process and returns a
+[`HardeningReport`][terok_util.hardening.HardeningReport] of what took —
+the floor every isolated child process (terok-sandbox's split supervisor
+children) applies at start-up.
 """
 
 from __future__ import annotations
@@ -38,7 +34,6 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import resource
-import sys
 from dataclasses import dataclass
 
 #: ``prctl`` option number for the dumpable flag (``linux/prctl.h``).
@@ -56,10 +51,9 @@ class HardeningReport:
 
     Each field is ``True`` only when the corresponding guarantee is in
     force for the current process.  ``no_dump`` and ``no_core`` are
-    expected to succeed anywhere the syscalls exist; ``memory_locked``
-    routinely comes back ``False`` in a rootless container without
-    ``CAP_IPC_LOCK`` and that is not an error — the caller decides
-    whether to log it.
+    expected to succeed; ``memory_locked`` routinely comes back ``False``
+    in a rootless container without ``CAP_IPC_LOCK`` and that is not an
+    error — the caller decides whether to log it.
     """
 
     #: ``prctl(PR_SET_DUMPABLE, 0)`` succeeded — no ptrace, no core dump.
@@ -89,9 +83,6 @@ def harden_self() -> HardeningReport:
     material — before opening the credential store or binding a socket —
     so the sensitive bytes are only ever mapped under the guarantees.
     """
-    if sys.platform != "linux":
-        return HardeningReport(no_dump=False, no_core=False, memory_locked=False)
-
     libc = _libc()
     return HardeningReport(
         no_dump=_clear_dumpable(libc),

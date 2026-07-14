@@ -64,13 +64,6 @@ def test_real_syscalls_take_effect() -> None:
     assert (soft, hard) == ("0", "0"), "RLIMIT_CORE must be pinned to zero"
 
 
-def test_non_linux_reports_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Off Linux the floor no-ops and every guarantee reads ``False``."""
-    monkeypatch.setattr(hardening.sys, "platform", "darwin")
-    report = harden_self()
-    assert report == HardeningReport(no_dump=False, no_core=False, memory_locked=False)
-
-
 def test_core_limit_is_independent_of_libc(monkeypatch: pytest.MonkeyPatch) -> None:
     """With libc unreachable, the pure-``resource`` core-limit clear still takes."""
     monkeypatch.setattr(hardening, "_libc", lambda: None)
