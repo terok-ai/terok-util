@@ -101,11 +101,21 @@ def harden_self() -> HardeningReport:
 
 
 def _libc() -> ctypes.CDLL | None:
-    """Return a handle on libc for the raw syscalls, or ``None`` if absent."""
-    try:
-        return ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
-    except OSError:
-        return None
+    """Return a handle on libc for the raw syscalls, or ``None`` if absent.
+
+    ``find_library("c")`` frequently comes up empty on musl (Alpine),
+    where the glibc-specific ``libc.so.6`` name also won't load — so fall
+    through to ``ctypes.CDLL(None)``, the process's own already-linked
+    libc, which exposes ``prctl`` / ``mlockall`` on glibc and musl alike
+    without guessing an architecture-specific SONAME.  Returns ``None``
+    only if every candidate fails to load.
+    """
+    for name in (ctypes.util.find_library("c"), None):
+        try:
+            return ctypes.CDLL(name, use_errno=True)
+        except OSError:
+            continue
+    return None
 
 
 def _clear_dumpable(libc: ctypes.CDLL | None) -> bool:
