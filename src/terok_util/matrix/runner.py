@@ -21,6 +21,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
+from typing import IO, cast
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
@@ -127,8 +128,8 @@ def run_slot(
         with subprocess.Popen(  # nosec B603
             argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
         ) as proc:
-            assert proc.stdout is not None  # nosec B101 — guaranteed by stdout=PIPE
-            for line in proc.stdout:
+            stdout = cast(IO[str], proc.stdout)  # guaranteed non-None by stdout=PIPE
+            for line in stdout:
                 sys.stdout.write(f"{line_prefix}{line}")
                 sys.stdout.flush()
             status = proc.wait()
