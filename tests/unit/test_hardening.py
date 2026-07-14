@@ -64,6 +64,27 @@ def test_real_syscalls_take_effect() -> None:
     assert (soft, hard) == ("0", "0"), "RLIMIT_CORE must be pinned to zero"
 
 
+def test_allow_debugger_keeps_process_dumpable() -> None:
+    """``allow_debugger`` leaves the dumpable flag set so a debugger can attach."""
+    probe = textwrap.dedent(
+        """
+        import ctypes, ctypes.util
+        from terok_util.hardening import harden_self
+
+        report = harden_self(allow_debugger=True)
+        libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+        _PR_GET_DUMPABLE = 3
+        print(f"{int(report.no_dump)}:{libc.prctl(_PR_GET_DUMPABLE, 0, 0, 0, 0)}")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    no_dump, dumpable = result.stdout.strip().split(":")
+    assert no_dump == "0", "no_dump must report False in debug mode"
+    assert dumpable == "1", "the process must stay ptrace-able (dumpable left at 1)"
+
+
 def test_core_limit_is_independent_of_libc(monkeypatch: pytest.MonkeyPatch) -> None:
     """With libc unreachable, the pure-``resource`` core-limit clear still takes."""
     monkeypatch.setattr(hardening, "_libc", lambda: None)
@@ -126,3 +147,14 @@ class TestHelpersInProcess:
         report = harden_self()
         assert report == HardeningReport(no_dump=True, no_core=True, memory_locked=True)
         assert report.fully_hardened
+
+    def test_allow_debugger_skips_only_the_dumpable_clear(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Debug mode drops the no-ptrace guarantee but keeps core + swap locked."""
+        monkeypatch.setattr(hardening, "_libc", lambda: _FakeLibc(prctl_rc=0, mlockall_rc=0))
+        report = harden_self(allow_debugger=True)
+        # prctl would have returned 0 (success) had it been called — no_dump False
+        # therefore proves the dumpable clear was skipped, not that it failed.
+        assert report == HardeningReport(no_dump=False, no_core=True, memory_locked=True)
+        assert not report.fully_hardened

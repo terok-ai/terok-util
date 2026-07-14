@@ -69,7 +69,7 @@ class HardeningReport:
         return self.no_dump and self.no_core and self.memory_locked
 
 
-def harden_self() -> HardeningReport:
+def harden_self(*, allow_debugger: bool = False) -> HardeningReport:
     """Apply the process-hardening floor to the current process.
 
     Idempotent and side-effecting: clears the dumpable flag, zeroes the
@@ -82,10 +82,15 @@ def harden_self() -> HardeningReport:
     Call this as early as possible in a process that will hold secret
     material — before opening the credential store or binding a socket —
     so the sensitive bytes are only ever mapped under the guarantees.
+
+    *allow_debugger* leaves the dumpable flag set so a debugger, ``py-spy``,
+    or ``strace`` can attach — the escape hatch for running a task in debug
+    mode.  It trades away only the no-ptrace guarantee (``no_dump`` reports
+    ``False``); the core-dump and swap-out guarantees still apply.
     """
     libc = _libc()
     return HardeningReport(
-        no_dump=_clear_dumpable(libc),
+        no_dump=False if allow_debugger else _clear_dumpable(libc),
         no_core=_zero_core_limit(),
         memory_locked=_lock_memory(libc),
     )
