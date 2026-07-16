@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for [`podman_userns_args`][terok_util.podman.podman_userns_args]."""
+"""Tests for the version-aware podman argument helpers."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from terok_util.podman import _podman_version, podman_userns_args
+from terok_util.podman import _podman_version, podman_pull_always_args, podman_userns_args
 
 KEEP_ID_ARGS = ["--userns=keep-id:uid=1000,gid=1000"]
 
@@ -77,3 +77,27 @@ class TestPodmanUsernsArgs:
         podman_userns_args()
         podman_userns_args()
         assert run.call_count == 1
+
+
+class TestPodmanPullAlwaysArgs:
+    """``podman_pull_always_args`` picks the spelling the host podman accepts."""
+
+    @patch("terok_util.podman.subprocess.run", return_value=_probe_result("5.2.1"))
+    def test_modern_podman_gets_pull_policy(self, _run) -> None:
+        """Podman >= 4.0 takes the policy form."""
+        assert podman_pull_always_args() == ["--pull=always"]
+
+    @patch("terok_util.podman.subprocess.run", return_value=_probe_result("3.4.4"))
+    def test_pre_40_podman_gets_boolean_flag(self, _run) -> None:
+        """Podman 3.x rejects ``--pull=always`` — the boolean flag instead."""
+        assert podman_pull_always_args() == ["--pull-always"]
+
+    @patch("terok_util.podman.subprocess.run", return_value=_probe_result("4.0.0"))
+    def test_40_boundary_gets_pull_policy(self, _run) -> None:
+        """Podman 4.0 is the first release with the ``--pull`` policy option."""
+        assert podman_pull_always_args() == ["--pull=always"]
+
+    @patch("terok_util.podman.subprocess.run", side_effect=FileNotFoundError("podman"))
+    def test_probe_failure_assumes_modern(self, _run) -> None:
+        """A missing podman falls back to the policy form — its own error surfaces later."""
+        assert podman_pull_always_args() == ["--pull=always"]

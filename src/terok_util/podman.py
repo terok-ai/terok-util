@@ -3,8 +3,9 @@
 
 """Podman helpers shared by the terok packages.
 
-Currently exposes a single helper that maps the host UID/GID into the
-container user namespace for rootless podman invocations.
+Exposes helpers that spell podman arguments correctly for the host's
+podman release: user-namespace mapping for rootless invocations and the
+force-pull flag for image builds.
 """
 
 from __future__ import annotations
@@ -15,6 +16,9 @@ import subprocess  # nosec B404
 
 _KEEP_ID_UID_MIN = (4, 3)
 """First podman release that understands ``keep-id:uid=…`` customization."""
+
+_PULL_POLICY_MIN = (4, 0)
+"""First podman release whose ``build --pull`` accepts a policy string."""
 
 _DEV_ID = 1000
 """UID/GID of the conventional ``dev`` user in terok container images."""
@@ -49,6 +53,18 @@ def podman_userns_args() -> list[str]:
     return [arg for flag in ("--uidmap", "--gidmap") for m in mappings for arg in (flag, m)]
 
 
+def podman_pull_always_args() -> list[str]:
+    """Return the ``podman build`` flags that force re-pulling base images.
+
+    Podman 4.0 turned ``--pull`` into a policy option (``--pull=always``);
+    older releases take ``--pull`` as a boolean and reject the policy
+    form outright, spelling the same request ``--pull-always`` instead.
+    """
+    if _podman_version() >= _PULL_POLICY_MIN:
+        return ["--pull=always"]
+    return ["--pull-always"]
+
+
 @functools.cache
 def _podman_version() -> tuple[int, int]:
     """Podman client version as ``(major, minor)``.
@@ -71,4 +87,4 @@ def _podman_version() -> tuple[int, int]:
         return _KEEP_ID_UID_MIN
 
 
-__all__ = ["podman_userns_args"]
+__all__ = ["podman_pull_always_args", "podman_userns_args"]

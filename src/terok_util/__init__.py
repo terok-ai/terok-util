@@ -41,8 +41,9 @@ What lives here, by module:
 * [`hardening`][terok_util.hardening] — process self-hardening floor
   ([`harden_self`][terok_util.hardening.harden_self],
   [`HardeningReport`][terok_util.hardening.HardeningReport]).
-* [`podman`][terok_util.podman] — rootless ``--userns=keep-id`` builder
-  ([`podman_userns_args`][terok_util.podman.podman_userns_args]).
+* [`podman`][terok_util.podman] — version-aware podman argument spelling
+  ([`podman_userns_args`][terok_util.podman.podman_userns_args],
+  [`podman_pull_always_args`][terok_util.podman.podman_pull_always_args]).
 * [`matrix`][terok_util.matrix] — the shared multi-distro test-matrix
   engine behind the ``terok-matrix`` CLI; consuming repos declare their
   matrix in ``tests/containers/matrix.yml``
@@ -86,7 +87,7 @@ from .paths import (
 )
 
 # ── Podman helpers ────────────────────────────────────────────────
-from .podman import podman_userns_args
+from .podman import podman_pull_always_args, podman_userns_args
 
 # ── Untrusted-string sanitisation ─────────────────────────────────
 from .security import sanitize_tty
@@ -115,6 +116,7 @@ __all__ = [
     "namespace_config_dir",
     "namespace_runtime_dir",
     "namespace_state_dir",
+    "podman_pull_always_args",
     "podman_userns_args",
     "read_config_section",
     "read_config_top_level",
