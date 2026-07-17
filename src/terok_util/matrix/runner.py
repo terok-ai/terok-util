@@ -171,7 +171,7 @@ def sweep_containers(config: MatrixConfig) -> int:
     Returns:
         The number of containers removed.
     """
-    listing = subprocess.run(  # nosec B603
+    listing = subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
         ["podman", "ps", "-aq", "--filter", f"label={OWNERSHIP_LABEL}={config.image_prefix}"],
         check=False,
         capture_output=True,
@@ -180,7 +180,7 @@ def sweep_containers(config: MatrixConfig) -> int:
     container_ids = listing.stdout.split()
     if not container_ids:
         return 0
-    subprocess.run(  # nosec B603
+    subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
         ["podman", "rm", "-f", "-t", _REMOVAL_GRACE_SECONDS, *container_ids],
         check=False,
         capture_output=True,
@@ -222,7 +222,7 @@ def external_storage_leftovers() -> list[str]:
     another process, so recovery is superbuild's job; the CLI only names
     them.  Returns the container names (or ids, for nameless entries).
     """
-    listing = subprocess.run(  # nosec B603
+    listing = subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
         ["podman", "ps", "-a", "--external", "--format", _EXTERNAL_PS_FORMAT],
         check=False,
         capture_output=True,
