@@ -41,6 +41,9 @@ What lives here, by module:
 * [`hardening`][terok_util.hardening] — process self-hardening floor
   ([`harden_self`][terok_util.hardening.harden_self],
   [`HardeningReport`][terok_util.hardening.HardeningReport]).
+* [`landlock`][terok_util.landlock] — filesystem write-confinement
+  ([`restrict_writes`][terok_util.landlock.restrict_writes],
+  [`LandlockReport`][terok_util.landlock.LandlockReport]).
 * [`podman`][terok_util.podman] — version-aware podman argument spelling
   ([`podman_userns_args`][terok_util.podman.podman_userns_args],
   [`podman_pull_always_args`][terok_util.podman.podman_pull_always_args]).
@@ -71,6 +74,7 @@ from .fs import ensure_dir, ensure_dir_writable, write_sensitive_file
 
 # ── Process self-hardening ────────────────────────────────────────
 from .hardening import HardeningReport, harden_self
+from .landlock import LandlockReport, restrict_writes
 
 # ── Best-effort file logger ───────────────────────────────────────
 from .logging import BestEffortLogger
@@ -106,11 +110,13 @@ __all__ = [
     "ConfigStack",
     "HardeningReport",
     "KeyRow",
+    "LandlockReport",
     "LazyHandler",
     "deep_merge",
     "ensure_dir",
     "ensure_dir_writable",
     "harden_self",
+    "restrict_writes",
     "config_file_paths",
     "host_uid",
     "namespace_config_dir",
