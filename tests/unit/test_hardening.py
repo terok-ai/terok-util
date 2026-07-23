@@ -21,7 +21,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from terok_util import hardening
-from terok_util.hardening import HardeningReport, harden_self
+from terok_util.hardening import (
+    HardeningReport,
+    LandlockReport,
+    confine_filesystem,
+    harden_self,
+)
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="hardening floor is Linux-only")
 
@@ -184,3 +189,93 @@ class TestHelpersInProcess:
             no_dump=False, no_core=True, memory_locked=True, no_new_privs=True
         )
         assert not report.fully_hardened
+
+
+class TestConfineFilesystem:
+    """The Landlock FS floor — irreversible restriction runs in a subprocess.
+
+    The real ``restrict_self`` is process-wide and permanent, so its effect
+    is exercised in a fresh interpreter; the degradation and add-rule logic
+    are checked in-process with the ABI probe / syscalls stubbed.
+    """
+
+    def test_confines_reads_and_writes_to_the_lane(self, tmp_path) -> None:
+        """A fresh process reads+writes its lane; a sibling is unreadable and unwritable."""
+        ro = tmp_path / "ro"
+        rw = tmp_path / "rw"
+        outside = tmp_path / "outside"
+        for directory in (ro, rw, outside):
+            directory.mkdir()
+        (outside / "secret").write_text("classified")  # a sibling's file it must not read
+
+        probe = textwrap.dedent(
+            f"""
+            import ctypes
+            from pathlib import Path
+            from terok_util.hardening import confine_filesystem
+
+            ctypes.CDLL(None, use_errno=True).prctl(38, 1, 0, 0, 0)  # no_new_privs
+            report = confine_filesystem([Path({str(ro)!r})], [Path({str(rw)!r})])
+            if not report.confined:
+                print(f"unsupported:{{report.reason}}")
+                raise SystemExit(0)
+
+            out = []
+            Path({str(rw)!r}, "ok").write_text("x")            # read-write lane → write OK
+            list(Path({str(ro)!r}).iterdir())                  # read-exec lane → read OK
+            try:
+                Path({str(ro)!r}, "no").write_text("x")
+                out.append("ro-write-LEAK")
+            except PermissionError:
+                out.append("ro-write-denied")           # read-exec lane is not writable
+            try:
+                Path({str(outside)!r}, "secret").read_text()
+                out.append("sibling-read-LEAK")
+            except (PermissionError, OSError):
+                out.append("sibling-read-denied")        # outside the lane → not even readable
+            print(";".join(out))
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+        )
+        line = result.stdout.strip()
+        if line.startswith("unsupported:"):
+            pytest.skip(f"kernel without Landlock: {line}")
+        assert line == "ro-write-denied;sibling-read-denied", f"confinement leaked: {line!r}"
+
+    def test_unsupported_kernel_is_a_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A kernel without Landlock reports ``confined=False`` and restricts nothing."""
+        monkeypatch.setattr(hardening, "_landlock_abi", lambda _libc: -1)
+        report = confine_filesystem([], [])
+        assert isinstance(report, LandlockReport)
+        assert report.confined is False
+        assert "unavailable" in report.reason
+
+    def test_absent_libc_is_a_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With libc unreachable (musl edge case) confinement degrades, never raises."""
+        monkeypatch.setattr(hardening, "_libc", lambda: None)
+        report = confine_filesystem([], [])
+        assert report.confined is False
+
+    def test_missing_lane_path_is_skipped(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+        """A non-existent grant path is skipped rather than aborting the restriction.
+
+        Stubs ``restrict_self`` so the runner itself stays unconfined while
+        still exercising the add-rule loop over a path that isn't there.
+        """
+        calls: list[int] = []
+        real_syscall = hardening.ctypes.CDLL(None, use_errno=True).syscall
+
+        def _syscall(nr, *args):  # noqa: ANN001, ANN202
+            if nr == hardening._NR_RESTRICT_SELF:
+                calls.append(nr)
+                return 0
+            return real_syscall(nr, *args)
+
+        fake_libc = type("Libc", (), {"syscall": staticmethod(_syscall)})()
+        monkeypatch.setattr(hardening, "_libc", lambda: fake_libc)
+
+        report = confine_filesystem([tmp_path / "nope-r"], [tmp_path / "nope-w"])
+        assert report.confined is True  # restrict_self stubbed to succeed
+        assert calls == [hardening._NR_RESTRICT_SELF]

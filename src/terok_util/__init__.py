@@ -48,7 +48,9 @@ What lives here, by module:
   ([`sanitize_tty`][terok_util.security.sanitize_tty]).
 * [`hardening`][terok_util.hardening] — process self-hardening floor
   ([`harden_self`][terok_util.hardening.harden_self],
-  [`HardeningReport`][terok_util.hardening.HardeningReport]).
+  [`HardeningReport`][terok_util.hardening.HardeningReport]) and the companion
+  Landlock filesystem floor
+  ([`confine_filesystem`][terok_util.hardening.confine_filesystem]).
 * [`podman`][terok_util.podman] — version-aware podman argument spelling
   ([`podman_userns_args`][terok_util.podman.podman_userns_args],
   [`podman_pull_always_args`][terok_util.podman.podman_pull_always_args]).
@@ -78,7 +80,7 @@ from .config_stack import ConfigStack, deep_merge
 from .fs import ensure_dir, ensure_dir_writable, write_sensitive_file
 
 # ── Process self-hardening ────────────────────────────────────────
-from .hardening import HardeningReport, harden_self
+from .hardening import HardeningReport, LandlockReport, confine_filesystem, harden_self
 
 # ── Native journald writer (dependency-free) ──────────────────────
 from .journal import JournalWriter, journald_available
@@ -121,8 +123,10 @@ __all__ = [
     "HardeningReport",
     "JournalWriter",
     "KeyRow",
+    "LandlockReport",
     "LazyHandler",
     "configure",
+    "confine_filesystem",
     "deep_merge",
     "journald_available",
     "tee_output",
