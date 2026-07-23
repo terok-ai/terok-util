@@ -25,8 +25,16 @@ What lives here, by module:
   ([`ensure_dir`][terok_util.fs.ensure_dir],
   [`ensure_dir_writable`][terok_util.fs.ensure_dir_writable],
   [`write_sensitive_file`][terok_util.fs.write_sensitive_file]).
+* [`journal`][terok_util.journal] — dependency-free writer for the systemd
+  journal's native protocol ([`JournalWriter`][terok_util.journal.JournalWriter],
+  [`journald_available`][terok_util.journal.journald_available]).
 * [`logging`][terok_util.logging] — soft-fail file logger
-  ([`BestEffortLogger`][terok_util.logging.BestEffortLogger]).
+  ([`BestEffortLogger`][terok_util.logging.BestEffortLogger]) plus the unified
+  [`configure`][terok_util.logging.configure] that routes stdlib logging to
+  journald-when-present, else stderr.
+* [`output_capture`][terok_util.output_capture] — tee a block's stdout/stderr
+  to journald/a file with the live terminal intact
+  ([`tee_output`][terok_util.output_capture.tee_output]).
 * [`yaml`][terok_util.yaml] — round-trip YAML facade over ``ruamel.yaml``
   ([`load`][terok_util.yaml.load], [`dump`][terok_util.yaml.dump]).
 * [`paths`][terok_util.paths] — XDG-aware namespace path resolution
@@ -72,8 +80,14 @@ from .fs import ensure_dir, ensure_dir_writable, write_sensitive_file
 # ── Process self-hardening ────────────────────────────────────────
 from .hardening import HardeningReport, harden_self
 
-# ── Best-effort file logger ───────────────────────────────────────
-from .logging import BestEffortLogger
+# ── Native journald writer (dependency-free) ──────────────────────
+from .journal import JournalWriter, journald_available
+
+# ── Best-effort file logger + unified stdlib-logging configuration ─
+from .logging import BestEffortLogger, configure
+
+# ── Output-stream capture (tee to journald/file, live terminal intact) ─
+from .output_capture import tee_output
 
 # ── XDG-aware namespace paths + layered config readers ────────────
 from .paths import (
@@ -105,9 +119,13 @@ __all__ = [
     "CommandTree",
     "ConfigStack",
     "HardeningReport",
+    "JournalWriter",
     "KeyRow",
     "LazyHandler",
+    "configure",
     "deep_merge",
+    "journald_available",
+    "tee_output",
     "ensure_dir",
     "ensure_dir_writable",
     "harden_self",

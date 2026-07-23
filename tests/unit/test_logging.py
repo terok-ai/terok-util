@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import stat
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -139,3 +140,68 @@ class TestLazyPathResolution:
         assert "one" in first.read_text(encoding="utf-8")
         assert "two" in second.read_text(encoding="utf-8")
         assert "two" not in first.read_text(encoding="utf-8")
+
+
+class TestConfigure:
+    """`configure` installs the unified root handler (journald or stderr)."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_root(self) -> Iterator[None]:
+        """Snapshot and restore the root logger so tests don't leak handlers."""
+        import logging
+
+        root = logging.getLogger()
+        saved_handlers, saved_level = root.handlers[:], root.level
+        yield
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+    def test_stderr_fallback_when_no_journald(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        import logging
+
+        from terok_util import logging as tlog
+
+        monkeypatch.setattr(tlog, "journald_available", lambda: False)
+        tlog.configure("terok-x", level=logging.INFO)
+        logging.getLogger("terok_x.sub").info("hello-fallback")
+        assert "hello-fallback" in capsys.readouterr().err
+
+    def test_journald_handler_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import logging
+
+        from terok_util import logging as tlog
+
+        class _FakeWriter:
+            def __init__(self, identifier: str, *, static_fields: object = None) -> None:
+                self.identifier = identifier
+                self.sent: list[tuple[str, int, dict]] = []
+
+            def send(self, message: str, *, priority: int = 6, **fields: str) -> None:
+                self.sent.append((message, priority, fields))
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(tlog, "journald_available", lambda: True)
+        monkeypatch.setattr(tlog, "JournalWriter", _FakeWriter)
+        handler = tlog.configure("terok-shield")
+        logging.getLogger("terok_shield.dns").warning("dns-warn")
+
+        sent = handler._writer.sent  # type: ignore[attr-defined]
+        assert sent and sent[0][0] == "dns-warn"
+        assert sent[0][1] == tlog.PRIORITY_WARNING
+        assert sent[0][2]["LOGGER"] == "terok_shield.dns"
+
+    def test_reconfigure_does_not_stack_handlers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import logging
+
+        from terok_util import logging as tlog
+
+        monkeypatch.setattr(tlog, "journald_available", lambda: False)
+        tlog.configure("terok-a")
+        tlog.configure("terok-b")
+        root = logging.getLogger()
+        tagged = [h for h in root.handlers if getattr(h, tlog._HANDLER_TAG, False)]
+        assert len(tagged) == 1

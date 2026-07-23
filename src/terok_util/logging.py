@@ -16,13 +16,37 @@ the file-side write keeps the original bytes for forensic review.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TextIO
 
+from .journal import (
+    PRIORITY_ERR,
+    PRIORITY_INFO,
+    PRIORITY_WARNING,
+    JournalWriter,
+    journald_available,
+)
 from .security import sanitize_tty
+
+_DEFAULT_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+"""Stderr-fallback line format when journald isn't the sink."""
+
+_HANDLER_TAG = "_terok_unified_handler"
+"""Marker attribute so :func:`configure` can replace its own handler idempotently."""
+
+_PRIORITY_BY_LEVEL: dict[int, int] = {
+    logging.CRITICAL: 2,
+    logging.ERROR: PRIORITY_ERR,
+    logging.WARNING: PRIORITY_WARNING,
+    logging.INFO: PRIORITY_INFO,
+    logging.DEBUG: 7,
+}
+"""stdlib log level → syslog priority for journald entries."""
 
 
 class BestEffortLogger:
@@ -94,4 +118,92 @@ class BestEffortLogger:
         self.warning(f"[{component}] {message}")
 
 
-__all__ = ["BestEffortLogger"]
+class _JournalHandler(logging.Handler):
+    """Route stdlib logging records to journald over the native protocol.
+
+    The record's message (with any exception traceback the default
+    formatter appends) becomes the ``MESSAGE`` field; the level maps to a
+    syslog ``PRIORITY``; and the logger name / source location ride along
+    as ``LOGGER`` / ``CODE_*`` fields so ``journalctl`` can filter and
+    show provenance.  Emission is best-effort — a journald hiccup routes
+    through [`handleError`][logging.Handler.handleError], never up to the
+    caller.
+    """
+
+    def __init__(self, identifier: str) -> None:
+        """Open a [`JournalWriter`][terok_util.journal.JournalWriter] for *identifier*."""
+        super().__init__()
+        self._writer = JournalWriter(identifier)
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Send one record to journald as a structured entry."""
+        try:
+            self._writer.send(
+                self.format(record),
+                priority=_PRIORITY_BY_LEVEL.get(record.levelno, PRIORITY_INFO),
+                LOGGER=record.name,
+                CODE_FILE=record.pathname,
+                CODE_LINE=str(record.lineno),
+                CODE_FUNC=record.funcName or "",
+            )
+        except Exception:  # noqa: BLE001 — logging must never raise into the caller
+            self.handleError(record)
+
+    def close(self) -> None:
+        """Close the journal socket, then the handler."""
+        self._writer.close()
+        super().close()
+
+
+def configure(
+    identifier: str,
+    *,
+    level: int = logging.INFO,
+    fmt: str = _DEFAULT_FORMAT,
+    stream: TextIO | None = None,
+) -> logging.Handler:
+    """Install the unified log handler on the root logger — the one call a package makes.
+
+    When journald is present the root logger's records go to it (tagged
+    ``SYSLOG_IDENTIFIER=identifier``); otherwise they fall back to a
+    stderr [`StreamHandler`][logging.StreamHandler] formatted with *fmt* —
+    which preserves the in-container daemon behaviour where a wrapper
+    redirects stderr to a file (containers have no journal socket, so they
+    always take this branch).
+
+    Idempotent by construction: a prior handler installed by ``configure``
+    is removed first, so re-invoking it (or a CLI that reconfigures)
+    never stacks duplicate handlers.  Every module that already does
+    ``logging.getLogger(__name__)`` is captured with no call-site change,
+    because all such loggers propagate to the root.
+
+    Args:
+        identifier: ``SYSLOG_IDENTIFIER`` for journald entries and the
+            audit name for the process (e.g. ``"terok-shield"``).
+        level: Root log level.
+        fmt: ``logging.Formatter`` string for the stderr fallback only.
+        stream: Fallback stream (defaults to :data:`sys.stderr`).
+
+    Returns:
+        The installed handler (mostly for tests / advanced re-wiring).
+    """
+    root = logging.getLogger()
+    root.setLevel(level)
+    for stale in [h for h in root.handlers if getattr(h, _HANDLER_TAG, False)]:
+        root.removeHandler(stale)
+        stale.close()
+
+    handler: logging.Handler
+    if journald_available():
+        handler = _JournalHandler(identifier)
+    else:
+        handler = logging.StreamHandler(stream or sys.stderr)
+        handler.setFormatter(logging.Formatter(fmt))
+    handler.setLevel(level)
+    setattr(handler, _HANDLER_TAG, True)
+    root.addHandler(handler)
+    return handler
+
+
+__all__ = ["BestEffortLogger", "configure"]
