@@ -121,3 +121,40 @@ def test_tee_output_runs_untee_when_no_sink_available(
     with oc.tee_output("terok", fields={}, file_path_fn=None):
         ran.append(True)
     assert ran == [True]  # block still executed with no durable sink
+
+
+def test_tee_output_uses_journald_sink_when_socket_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """With a journald socket present, output is teed to the journal, not a file."""
+    sock_path = tmp_path / "journal.sock"
+    receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    receiver.bind(str(sock_path))
+    receiver.settimeout(2.0)
+    monkeypatch.setattr(journal, "JOURNALD_SOCKET", sock_path)
+    monkeypatch.setattr(oc, "journald_available", lambda: True)
+    try:
+        with oc.tee_output("terok", fields={"TEROK_KIND": "run"}):
+            os.write(1, b"journal-bound-line\n")
+        datagram = receiver.recv(65536)
+    finally:
+        receiver.close()
+
+    assert b"journal-bound-line" in datagram
+    assert b"SYSLOG_IDENTIFIER=terok\n" in datagram
+    assert "journalctl" in capfd.readouterr().err  # discoverability hint
+
+
+def test_tee_output_runs_untee_when_file_path_unopenable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file sink that fails to open drops to running the block un-teed."""
+    monkeypatch.setattr(oc, "journald_available", lambda: False)
+
+    def _boom() -> Path:
+        raise OSError("no such directory")
+
+    ran = []
+    with oc.tee_output("terok", fields={}, file_path_fn=_boom):
+        ran.append(True)
+    assert ran == [True]

@@ -103,3 +103,14 @@ def test_writer_send_is_best_effort_when_socket_gone(
     # send must swallow the resulting OSError rather than raise into the caller
     writer.send("into the void")
     writer.close()
+
+
+def test_journald_available_false_when_probe_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ``is_socket`` that raises ``OSError`` reads as unavailable, not a crash."""
+
+    class _Exploding:
+        def is_socket(self) -> bool:
+            raise OSError("permission denied")
+
+    monkeypatch.setattr(journal, "JOURNALD_SOCKET", _Exploding())
+    assert journal.journald_available() is False

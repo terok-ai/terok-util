@@ -186,13 +186,39 @@ class TestConfigure:
 
         monkeypatch.setattr(tlog, "journald_available", lambda: True)
         monkeypatch.setattr(tlog, "JournalWriter", _FakeWriter)
-        handler = tlog.configure("terok-shield")
+        (handler,) = tlog.configure("terok-shield")
         logging.getLogger("terok_shield.dns").warning("dns-warn")
 
         sent = handler._writer.sent  # type: ignore[attr-defined]
         assert sent and sent[0][0] == "dns-warn"
         assert sent[0][1] == tlog.PRIORITY_WARNING
         assert sent[0][2]["LOGGER"] == "terok_shield.dns"
+
+    def test_stderr_flag_adds_stderr_alongside_journald(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        import logging
+
+        from terok_util import logging as tlog
+
+        class _FakeWriter:
+            def __init__(self, identifier: str, *, static_fields: object = None) -> None:
+                self.sent: list[tuple[str, int, dict]] = []
+
+            def send(self, message: str, *, priority: int = 6, **fields: str) -> None:
+                self.sent.append((message, priority, fields))
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(tlog, "journald_available", lambda: True)
+        monkeypatch.setattr(tlog, "JournalWriter", _FakeWriter)
+        handlers = tlog.configure("terok-clearance-hub", stderr=True)
+        logging.getLogger("terok_clearance.hub").info("dual-sink")
+
+        assert len(handlers) == 2  # journald + stderr
+        assert handlers[0]._writer.sent[0][0] == "dual-sink"  # type: ignore[attr-defined]
+        assert "dual-sink" in capsys.readouterr().err  # parent's pipe still fed
 
     def test_reconfigure_does_not_stack_handlers(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import logging
@@ -205,3 +231,49 @@ class TestConfigure:
         root = logging.getLogger()
         tagged = [h for h in root.handlers if getattr(h, tlog._HANDLER_TAG, False)]
         assert len(tagged) == 1
+
+    def test_emit_survives_a_failing_writer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A writer that raises is routed through ``handleError``, never the caller."""
+        import logging
+
+        from terok_util import logging as tlog
+
+        class _BrokenWriter:
+            def __init__(self, identifier: str, *, static_fields: object = None) -> None:
+                pass
+
+            def send(self, message: str, *, priority: int = 6, **fields: str) -> None:
+                raise OSError("journal gone")
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(tlog, "journald_available", lambda: True)
+        monkeypatch.setattr(tlog, "JournalWriter", _BrokenWriter)
+        (handler,) = tlog.configure("terok-x")
+        handled: list[logging.LogRecord] = []
+        monkeypatch.setattr(handler, "handleError", handled.append)
+
+        logging.getLogger("terok_x.sub").info("boom")  # must not raise
+        assert len(handled) == 1
+
+    def test_close_closes_the_journal_writer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Closing the handler releases the underlying journal socket."""
+        from terok_util import logging as tlog
+
+        class _FakeWriter:
+            def __init__(self, identifier: str, *, static_fields: object = None) -> None:
+                self.closed = False
+
+            def send(self, message: str, *, priority: int = 6, **fields: str) -> None:
+                pass
+
+            def close(self) -> None:
+                self.closed = True
+
+        monkeypatch.setattr(tlog, "journald_available", lambda: True)
+        monkeypatch.setattr(tlog, "JournalWriter", _FakeWriter)
+        (handler,) = tlog.configure("terok-x")
+        writer = handler._writer  # type: ignore[attr-defined]
+        handler.close()
+        assert writer.closed is True

@@ -156,25 +156,40 @@ class _JournalHandler(logging.Handler):
         super().close()
 
 
+def _stderr_handler(level: int, fmt: str, stream: TextIO | None) -> logging.Handler:
+    """Build a tagged stderr ``StreamHandler`` at *level* with *fmt*."""
+    handler = logging.StreamHandler(stream or sys.stderr)
+    handler.setFormatter(logging.Formatter(fmt))
+    handler.setLevel(level)
+    setattr(handler, _HANDLER_TAG, True)
+    return handler
+
+
 def configure(
     identifier: str,
     *,
     level: int = logging.INFO,
     fmt: str = _DEFAULT_FORMAT,
     stream: TextIO | None = None,
-) -> logging.Handler:
-    """Install the unified log handler on the root logger — the one call a package makes.
+    stderr: bool = False,
+) -> list[logging.Handler]:
+    """Install the unified log handler(s) on the root logger — the one call a package makes.
 
     When journald is present the root logger's records go to it (tagged
     ``SYSLOG_IDENTIFIER=identifier``); otherwise they fall back to a
-    stderr [`StreamHandler`][logging.StreamHandler] formatted with *fmt* —
-    which preserves the in-container daemon behaviour where a wrapper
-    redirects stderr to a file (containers have no journal socket, so they
-    always take this branch).
+    stderr [`StreamHandler`][logging.StreamHandler] formatted with *fmt*.
+    Containers have no journal socket, so an in-container daemon always
+    takes the stderr branch — preserving the pattern where a wrapper
+    redirects that stderr to a file.
 
-    Idempotent by construction: a prior handler installed by ``configure``
-    is removed first, so re-invoking it (or a CLI that reconfigures)
-    never stacks duplicate handlers.  Every module that already does
+    Set *stderr* when the process's stderr is deliberately consumed by a
+    parent (a launched daemon whose logs the launcher reads): a stderr
+    handler is then installed **in addition** to journald, so the parent's
+    pipe keeps receiving records even on a journald host.
+
+    Idempotent by construction: handlers previously installed by
+    ``configure`` are removed first, so re-invoking it never stacks
+    duplicates.  Every module that already does
     ``logging.getLogger(__name__)`` is captured with no call-site change,
     because all such loggers propagate to the root.
 
@@ -182,11 +197,13 @@ def configure(
         identifier: ``SYSLOG_IDENTIFIER`` for journald entries and the
             audit name for the process (e.g. ``"terok-shield"``).
         level: Root log level.
-        fmt: ``logging.Formatter`` string for the stderr fallback only.
-        stream: Fallback stream (defaults to :data:`sys.stderr`).
+        fmt: ``logging.Formatter`` string for the stderr handler.
+        stream: Stderr stream to use (defaults to :data:`sys.stderr`).
+        stderr: Also emit to stderr even when journald is the primary sink
+            — for daemons whose stderr a parent process consumes.
 
     Returns:
-        The installed handler (mostly for tests / advanced re-wiring).
+        The installed handler(s), primary first (for tests / re-wiring).
     """
     root = logging.getLogger()
     root.setLevel(level)
@@ -194,16 +211,20 @@ def configure(
         root.removeHandler(stale)
         stale.close()
 
-    handler: logging.Handler
+    handlers: list[logging.Handler] = []
     if journald_available():
-        handler = _JournalHandler(identifier)
+        primary = _JournalHandler(identifier)
+        primary.setLevel(level)
+        setattr(primary, _HANDLER_TAG, True)
+        handlers.append(primary)
+        if stderr:
+            handlers.append(_stderr_handler(level, fmt, stream))
     else:
-        handler = logging.StreamHandler(stream or sys.stderr)
-        handler.setFormatter(logging.Formatter(fmt))
-    handler.setLevel(level)
-    setattr(handler, _HANDLER_TAG, True)
-    root.addHandler(handler)
-    return handler
+        handlers.append(_stderr_handler(level, fmt, stream))
+
+    for handler in handlers:
+        root.addHandler(handler)
+    return handlers
 
 
 __all__ = ["BestEffortLogger", "configure"]

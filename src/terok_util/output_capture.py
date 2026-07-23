@@ -136,7 +136,7 @@ def _write_all(fd: int, data: bytes) -> None:
         view = view[os.write(fd, view) :]
 
 
-def _copy_winsize(src_fd: int, dst_fd: int) -> None:
+def _copy_winsize(src_fd: int, dst_fd: int) -> None:  # pragma: no cover — real-tty only
     """Copy the terminal window size from *src_fd* onto *dst_fd* (best-effort)."""
     import fcntl
     import termios
@@ -160,7 +160,7 @@ def _capture(sink: _StreamSink) -> Iterator[None]:
     sys.stderr.flush()
     saved_out, saved_err = os.dup(1), os.dup(2)
     is_tty = os.isatty(saved_out)
-    if is_tty:
+    if is_tty:  # pragma: no cover — real-tty only
         master, slave = os.openpty()
         _copy_winsize(saved_out, slave)
     else:
@@ -171,7 +171,7 @@ def _capture(sink: _StreamSink) -> Iterator[None]:
         while True:
             try:
                 data = os.read(master, _READ_CHUNK)
-            except OSError:
+            except OSError:  # pragma: no cover — pty EIO on slave close
                 break  # EIO once the slave side is fully closed
             if not data:
                 break
@@ -185,7 +185,7 @@ def _capture(sink: _StreamSink) -> Iterator[None]:
         os.dup2(slave, 1)
         os.dup2(slave, 2)
         reader.start()
-        if is_tty and _SIGWINCH is not None:
+        if is_tty and _SIGWINCH is not None:  # pragma: no cover — real-tty only
             with contextlib.suppress(ValueError):  # not in the main thread
                 prev_winch = signal.getsignal(_SIGWINCH)
                 signal.signal(_SIGWINCH, lambda *_: _copy_winsize(saved_out, slave))
@@ -193,7 +193,7 @@ def _capture(sink: _StreamSink) -> Iterator[None]:
     finally:
         sys.stdout.flush()
         sys.stderr.flush()
-        if prev_winch is not None and _SIGWINCH is not None:
+        if prev_winch is not None and _SIGWINCH is not None:  # pragma: no cover — real-tty only
             signal.signal(_SIGWINCH, prev_winch)
         os.dup2(saved_out, 1)
         os.dup2(saved_err, 2)
