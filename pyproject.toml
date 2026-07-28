@@ -50,7 +50,7 @@ Security = "https://github.com/terok-ai/terok-util/security/policy"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.15.20",
+    "ruff~=0.16.0",
     "bandit>=1.7",
     "docstr-coverage>=2.3.2,<3",
     "complexipy>=6.0.1",
