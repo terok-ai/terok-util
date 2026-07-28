@@ -272,4 +272,4 @@ jobs:
           enable-cache: true
 
       - name: Verify README renders for PyPI
-        run: uv run --no-project --with 'readme-renderer[md]' python -m readme_renderer README.md --format md
+        run: uv run --no-project --with 'readme-renderer[md]==45.0' python -m readme_renderer README.md --format md
