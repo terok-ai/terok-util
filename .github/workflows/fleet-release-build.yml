@@ -37,7 +37,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0    # hatch-vcs needs full history
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
