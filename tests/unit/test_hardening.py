@@ -13,6 +13,9 @@ checked in-process with the syscalls stubbed out.
 
 from __future__ import annotations
 
+import errno
+import os
+import struct
 import subprocess
 import sys
 import textwrap
@@ -43,6 +46,71 @@ class _FakeLibc:
 
     def mlockall(self, *_args: int) -> int:
         return self._mlockall_rc
+
+
+class _FakeLandlockLibc:
+    """A Landlock syscall recorder with real disposable fds for rulesets."""
+
+    def __init__(
+        self,
+        *,
+        abi: int = 7,
+        create_error: int | None = None,
+        add_error: int | None = None,
+        restrict_error: int | None = None,
+    ) -> None:
+        self.abi = abi
+        self.create_error = create_error
+        self.add_error = add_error
+        self.restrict_error = restrict_error
+        self.handled_access: list[int] = []
+        self.allowed_access: list[int] = []
+        self.restrict_flags: list[int] = []
+
+    def syscall(self, number: int, *args) -> int:  # noqa: ANN002
+        """Emulate the three Landlock syscalls and record their policy arguments."""
+        if number == hardening._NR_CREATE_RULESET:
+            if args == (None, 0, hardening._CREATE_RULESET_VERSION):
+                return self.abi
+            if self.create_error is not None:
+                hardening.ctypes.set_errno(self.create_error)
+                return -1
+            self.handled_access.append(struct.unpack(hardening._RULESET_ATTR, args[0])[0])
+            return os.open(os.devnull, os.O_RDONLY | os.O_CLOEXEC)
+        if number == hardening._NR_ADD_RULE:
+            self.allowed_access.append(struct.unpack(hardening._PATH_BENEATH_ATTR, args[2])[0])
+            if self.add_error is not None:
+                hardening.ctypes.set_errno(self.add_error)
+                return -1
+            return 0
+        if number == hardening._NR_RESTRICT_SELF:
+            self.restrict_flags.append(args[1])
+            if self.restrict_error is not None:
+                hardening.ctypes.set_errno(self.restrict_error)
+                return -1
+            return 0
+        raise AssertionError(f"unexpected syscall {number}")
+
+
+def _stub_landlock(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    abi: int = 7,
+    thread_count: int | None = 1,
+    create_error: int | None = None,
+    add_error: int | None = None,
+    restrict_error: int | None = None,
+) -> _FakeLandlockLibc:
+    """Install a deterministic Landlock syscall/thread-count facade."""
+    fake = _FakeLandlockLibc(
+        abi=abi,
+        create_error=create_error,
+        add_error=add_error,
+        restrict_error=restrict_error,
+    )
+    monkeypatch.setattr(hardening, "_libc", lambda: fake)
+    monkeypatch.setattr(hardening, "_process_thread_count", lambda: thread_count)
+    return fake
 
 
 def test_real_syscalls_take_effect() -> None:
@@ -194,45 +262,86 @@ class TestHelpersInProcess:
 class TestConfineFilesystem:
     """The Landlock FS floor — irreversible restriction runs in a subprocess.
 
-    The real ``restrict_self`` is process-wide and permanent, so its effect
-    is exercised in a fresh interpreter; the degradation and add-rule logic
-    are checked in-process with the ABI probe / syscalls stubbed.
+    The real ``restrict_self`` is permanent, so its effect is exercised in a
+    fresh interpreter; degradation and syscall orchestration are checked
+    in-process with stubbed Landlock calls.
     """
 
     def test_confines_reads_and_writes_to_the_lane(self, tmp_path) -> None:
-        """A fresh process reads+writes its lane; a sibling is unreadable and unwritable."""
+        """A full policy denies reads, writes, and truncation outside the writable lane."""
         ro = tmp_path / "ro"
         rw = tmp_path / "rw"
         outside = tmp_path / "outside"
         for directory in (ro, rw, outside):
             directory.mkdir()
-        (outside / "secret").write_text("classified")  # a sibling's file it must not read
+        ro_file = ro / "readonly"
+        rw_file = rw / "writable"
+        outside_file = outside / "secret"
+        ro_file.write_text("read only")
+        rw_file.write_text("writable")
+        outside_file.write_text("classified")
+        rename_source = rw / "source"
+        rename_destination = rw / "destination"
+        rename_source.mkdir()
+        rename_destination.mkdir()
+        (rename_source / "object").write_text("move me")
 
         probe = textwrap.dedent(
             f"""
-            import ctypes
+            import ctypes, os
             from pathlib import Path
             from terok_util.hardening import confine_filesystem
 
             ctypes.CDLL(None, use_errno=True).prctl(38, 1, 0, 0, 0)  # no_new_privs
-            report = confine_filesystem([Path({str(ro)!r})], [Path({str(rw)!r})])
+            report = confine_filesystem(
+                [Path({str(ro)!r})],
+                [Path({str(rw)!r}), Path(os.devnull)],
+            )
             if not report.confined:
-                print(f"unsupported:{{report.reason}}")
-                raise SystemExit(0)
+                if (
+                    report.partially_confined
+                    or "unavailable" in report.reason
+                    or report.reason.startswith("Landlock ABI 1")
+                ):
+                    print(f"unsupported:{{report.reason}}")
+                    raise SystemExit(0)
+                raise RuntimeError(report.reason)
 
             out = []
-            Path({str(rw)!r}, "ok").write_text("x")            # read-write lane → write OK
-            list(Path({str(ro)!r}).iterdir())                  # read-exec lane → read OK
+            Path({str(rw_file)!r}).write_text("updated")
+            os.truncate({str(rw_file)!r}, 1)
+            Path({str(rename_source / "object")!r}).rename(
+                Path({str(rename_destination / "object")!r})
+            )
+            list(Path({str(ro)!r}).iterdir())
+            descriptor = os.open(os.devnull, os.O_RDWR)
+            os.close(descriptor)
+            out.append("exact-file-ok")
+            try:
+                list(Path(os.devnull).parent.iterdir())
+                out.append("device-parent-read-LEAK")
+            except PermissionError:
+                out.append("device-parent-read-denied")
             try:
                 Path({str(ro)!r}, "no").write_text("x")
                 out.append("ro-write-LEAK")
             except PermissionError:
-                out.append("ro-write-denied")           # read-exec lane is not writable
+                out.append("ro-write-denied")
             try:
-                Path({str(outside)!r}, "secret").read_text()
+                Path({str(outside_file)!r}).read_text()
                 out.append("sibling-read-LEAK")
             except (PermissionError, OSError):
-                out.append("sibling-read-denied")        # outside the lane → not even readable
+                out.append("sibling-read-denied")
+            try:
+                os.truncate({str(ro_file)!r}, 0)
+                out.append("ro-truncate-LEAK")
+            except PermissionError:
+                out.append("ro-truncate-denied")
+            try:
+                os.truncate({str(outside_file)!r}, 0)
+                out.append("sibling-truncate-LEAK")
+            except PermissionError:
+                out.append("sibling-truncate-denied")
             print(";".join(out))
             """
         )
@@ -242,7 +351,10 @@ class TestConfineFilesystem:
         line = result.stdout.strip()
         if line.startswith("unsupported:"):
             pytest.skip(f"kernel without Landlock: {line}")
-        assert line == "ro-write-denied;sibling-read-denied", f"confinement leaked: {line!r}"
+        assert line == (
+            "exact-file-ok;device-parent-read-denied;ro-write-denied;"
+            "sibling-read-denied;ro-truncate-denied;sibling-truncate-denied"
+        ), f"confinement leaked: {line!r}"
 
     def test_unsupported_kernel_is_a_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A kernel without Landlock reports ``confined=False`` and restricts nothing."""
@@ -257,6 +369,7 @@ class TestConfineFilesystem:
         monkeypatch.setattr(hardening, "_libc", lambda: None)
         report = confine_filesystem([], [])
         assert report.confined is False
+        assert report.partially_confined is False
 
     def test_missing_lane_path_is_skipped(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         """A non-existent grant path is skipped rather than aborting the restriction.
@@ -264,18 +377,188 @@ class TestConfineFilesystem:
         Stubs ``restrict_self`` so the runner itself stays unconfined while
         still exercising the add-rule loop over a path that isn't there.
         """
-        calls: list[int] = []
-        real_syscall = hardening.ctypes.CDLL(None, use_errno=True).syscall
-
-        def _syscall(nr, *args):  # noqa: ANN001, ANN202
-            if nr == hardening._NR_RESTRICT_SELF:
-                calls.append(nr)
-                return 0
-            return real_syscall(nr, *args)
-
-        fake_libc = type("Libc", (), {"syscall": staticmethod(_syscall)})()
-        monkeypatch.setattr(hardening, "_libc", lambda: fake_libc)
+        fake_libc = _stub_landlock(monkeypatch)
 
         report = confine_filesystem([tmp_path / "nope-r"], [tmp_path / "nope-w"])
         assert report.confined is True  # restrict_self stubbed to succeed
-        assert calls == [hardening._NR_RESTRICT_SELF]
+        assert fake_libc.allowed_access == []
+        assert fake_libc.restrict_flags == [0]
+
+    @pytest.mark.parametrize(
+        ("abi", "has_refer", "has_truncate"),
+        [(1, False, False), (2, True, False), (3, True, True)],
+    )
+    def test_access_masks_follow_the_probed_abi(
+        self, abi: int, has_refer: bool, has_truncate: bool
+    ) -> None:
+        """REFER starts at ABI 2 and TRUNCATE at ABI 3, never earlier."""
+        read_access, write_access = hardening._access_masks(abi)
+        refer = hardening._FilesystemAccess.REFER
+        truncate = hardening._FilesystemAccess.TRUNCATE
+
+        assert bool(write_access & refer) is has_refer
+        assert bool(write_access & truncate) is has_truncate
+        assert not read_access & (refer | truncate)
+
+    def test_rules_use_directory_or_exact_file_masks(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """Opened object type selects recursive directory or exact-file rights."""
+        read_directory = tmp_path / "read-directory"
+        write_directory = tmp_path / "write-directory"
+        read_file = tmp_path / "read-file"
+        write_file = tmp_path / "write-file"
+        read_directory.mkdir()
+        write_directory.mkdir()
+        read_file.touch()
+        write_file.touch()
+        fake_libc = _stub_landlock(monkeypatch, abi=3)
+
+        report = confine_filesystem(
+            [read_directory, read_file],
+            [write_directory, write_file],
+        )
+
+        read_access, write_access = hardening._access_masks(3)
+        read_file_access = read_access & hardening._FILE_OBJECT_ACCESS
+        write_file_access = write_access & hardening._FILE_OBJECT_ACCESS
+        assert report.confined
+        assert fake_libc.handled_access == [write_access]
+        assert fake_libc.allowed_access == [
+            read_access,
+            read_file_access,
+            write_access,
+            write_file_access,
+        ]
+
+    def test_failed_add_rule_abandons_ruleset_before_restriction(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """A requested existing grant must not be silently lost from an installed policy."""
+        lane = tmp_path / "lane"
+        lane.mkdir()
+        fake_libc = _stub_landlock(monkeypatch, add_error=errno.ENOMEM)
+
+        report = confine_filesystem([lane], [])
+
+        assert not report.confined
+        assert not report.partially_confined
+        assert "add_rule" in report.reason
+        assert fake_libc.restrict_flags == []
+
+    def test_nonmissing_open_error_abandons_ruleset(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """Only an absent grant is skippable; another open error aborts transactionally."""
+        symlink_loop = tmp_path / "loop"
+        symlink_loop.symlink_to(symlink_loop.name)
+        fake_libc = _stub_landlock(monkeypatch)
+
+        report = confine_filesystem([symlink_loop], [])
+
+        assert not report.confined
+        assert "open grant path" in report.reason
+        assert fake_libc.restrict_flags == []
+
+    def test_inspection_error_abandons_ruleset(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """A failed object-type inspection cannot degrade into an over-broad rule."""
+        lane = tmp_path / "lane"
+        lane.touch()
+        fake_libc = _stub_landlock(monkeypatch)
+        monkeypatch.setattr(hardening.os, "fstat", MagicMock(side_effect=OSError(errno.EIO, "I/O")))
+
+        report = confine_filesystem([lane], [])
+
+        assert not report.confined
+        assert "inspect grant path" in report.reason
+        assert fake_libc.restrict_flags == []
+
+    def test_process_thread_count_is_best_effort(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The procfs snapshot reports live tasks and degrades when procfs is inaccessible."""
+        assert (hardening._process_thread_count() or 0) >= 1
+        monkeypatch.setattr(hardening.os, "scandir", MagicMock(side_effect=OSError))
+        assert hardening._process_thread_count() is None
+
+    def test_abi_two_is_reported_as_partial_best_effort(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An old kernel receives supported restrictions without a false full-policy claim."""
+        fake_libc = _stub_landlock(monkeypatch, abi=2)
+
+        report = confine_filesystem([], [])
+
+        assert not report.confined
+        assert report.partially_confined
+        assert "truncation" in report.reason
+        assert fake_libc.restrict_flags == [0]
+
+    def test_abi_one_is_a_noop_to_preserve_write_lane_semantics(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ABI 1 cannot allow the cross-directory renames needed by writable lanes."""
+        fake_libc = _stub_landlock(monkeypatch, abi=1)
+
+        report = confine_filesystem([], [])
+
+        assert not report.confined
+        assert not report.partially_confined
+        assert "rename/link" in report.reason
+        assert fake_libc.handled_access == []
+
+    @pytest.mark.parametrize(
+        ("thread_count", "detail"),
+        [(2, "2 threads"), (None, "thread count unavailable")],
+    )
+    def test_old_abi_requires_a_verifiably_single_threaded_process(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        thread_count: int | None,
+        detail: str,
+    ) -> None:
+        """Without TSYNC, claiming process-wide coverage would leave sibling threads free."""
+        fake_libc = _stub_landlock(monkeypatch, thread_count=thread_count)
+
+        report = confine_filesystem([], [])
+
+        assert not report.confined
+        assert not report.partially_confined
+        assert detail in report.reason
+        assert fake_libc.handled_access == []
+
+    def test_abi_eight_uses_tsync_without_single_thread_precondition(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TSYNC atomically applies the policy to every existing process thread."""
+        fake_libc = _stub_landlock(monkeypatch, abi=8)
+        monkeypatch.setattr(
+            hardening,
+            "_process_thread_count",
+            MagicMock(side_effect=AssertionError("TSYNC must not preflight thread count")),
+        )
+
+        report = confine_filesystem([], [])
+
+        assert report.confined
+        assert fake_libc.restrict_flags == [hardening._RESTRICT_SELF_TSYNC]
+
+    def test_create_ruleset_failure_is_a_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ruleset creation error is reported before any restriction attempt."""
+        fake_libc = _stub_landlock(monkeypatch, create_error=errno.EMFILE)
+
+        report = confine_filesystem([], [])
+
+        assert not report.confined
+        assert "create_ruleset" in report.reason
+        assert fake_libc.restrict_flags == []
+
+    def test_restrict_self_failure_is_a_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A kernel rejection leaves the process outside the prepared ruleset."""
+        fake_libc = _stub_landlock(monkeypatch, restrict_error=errno.EPERM)
+
+        report = confine_filesystem([], [])
+
+        assert not report.confined
+        assert "restrict_self" in report.reason
+        assert fake_libc.restrict_flags == [0]

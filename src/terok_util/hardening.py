@@ -50,8 +50,11 @@ import ctypes
 import ctypes.util
 import os
 import resource
+import stat
 import struct
+from contextlib import suppress
 from dataclasses import dataclass
+from enum import IntFlag
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -199,25 +202,58 @@ _NR_RESTRICT_SELF = 446
 _CREATE_RULESET_VERSION = 1 << 0
 #: ``enum landlock_rule_type`` — a rule over a path and everything beneath it.
 _RULE_PATH_BENEATH = 1
+#: Apply a ruleset atomically to every thread in the process (Landlock ABI 8).
+_RESTRICT_SELF_TSYNC = 1 << 3
 
-#: Read-side filesystem access rights (Landlock ABI 1): open a file for
-#: reading, list a directory, execute a file.  Granted on the read-exec lane.
-_READ_ACCESS = (1 << 0) | (1 << 2) | (1 << 3)  # EXECUTE | READ_FILE | READ_DIR
+_LANDLOCK_ABI_REFER = 2
+_LANDLOCK_ABI_TRUNCATE = 3
+_LANDLOCK_ABI_TSYNC = 8
 
-#: Write-side filesystem access rights (Landlock ABI 1): every way of creating,
-#: changing, or removing a file.  Granted only on the read-write lane, on top
-#: of the read rights.
-_WRITE_ACCESS = (
-    (1 << 1)  # WRITE_FILE
-    | (1 << 4)  # REMOVE_DIR
-    | (1 << 5)  # REMOVE_FILE
-    | (1 << 6)  # MAKE_CHAR
-    | (1 << 7)  # MAKE_DIR
-    | (1 << 8)  # MAKE_REG
-    | (1 << 9)  # MAKE_SOCK
-    | (1 << 10)  # MAKE_FIFO
-    | (1 << 11)  # MAKE_BLOCK
-    | (1 << 12)  # MAKE_SYM
+#: Linux exposes one directory entry per live thread here.  Landlock ABI < 8
+#: has no atomic process-wide restriction, so this snapshot guards its
+#: single-threaded startup contract.
+_PROCESS_TASK_DIRECTORY = "/proc/self/task"
+
+
+class _FilesystemAccess(IntFlag):
+    """Filesystem rights from ``include/uapi/linux/landlock.h``."""
+
+    EXECUTE = 1 << 0
+    WRITE_FILE = 1 << 1
+    READ_FILE = 1 << 2
+    READ_DIR = 1 << 3
+    REMOVE_DIR = 1 << 4
+    REMOVE_FILE = 1 << 5
+    MAKE_CHAR = 1 << 6
+    MAKE_DIR = 1 << 7
+    MAKE_REG = 1 << 8
+    MAKE_SOCK = 1 << 9
+    MAKE_FIFO = 1 << 10
+    MAKE_BLOCK = 1 << 11
+    MAKE_SYM = 1 << 12
+    REFER = 1 << 13
+    TRUNCATE = 1 << 14
+
+
+_READ_FILE_ACCESS = _FilesystemAccess.EXECUTE | _FilesystemAccess.READ_FILE
+_READ_DIRECTORY_ACCESS = _READ_FILE_ACCESS | _FilesystemAccess.READ_DIR
+_FILE_OBJECT_ACCESS = (
+    _FilesystemAccess.EXECUTE
+    | _FilesystemAccess.WRITE_FILE
+    | _FilesystemAccess.READ_FILE
+    | _FilesystemAccess.TRUNCATE
+)
+_WRITE_ACCESS_V1 = (
+    _FilesystemAccess.WRITE_FILE
+    | _FilesystemAccess.REMOVE_DIR
+    | _FilesystemAccess.REMOVE_FILE
+    | _FilesystemAccess.MAKE_CHAR
+    | _FilesystemAccess.MAKE_DIR
+    | _FilesystemAccess.MAKE_REG
+    | _FilesystemAccess.MAKE_SOCK
+    | _FilesystemAccess.MAKE_FIFO
+    | _FilesystemAccess.MAKE_BLOCK
+    | _FilesystemAccess.MAKE_SYM
 )
 
 #: ``struct`` formats for the two Landlock attribute structs, native byte order
@@ -233,51 +269,89 @@ _PATH_BENEATH_ATTR = "=Qi"
 class LandlockReport:
     """Whether [`confine_filesystem`][terok_util.hardening.confine_filesystem] took hold.
 
-    ``confined`` is ``True`` only when the kernel is now enforcing the
-    restriction on this process.  ``reason`` explains a ``False`` — a kernel
-    without Landlock (< 5.13) or a build lacking the syscalls degrades to a
-    no-op, which the caller may log but must not treat as an error.
+    ``confined`` is ``True`` only when the complete requested policy covers
+    every thread in the process.  ABI 2 kernels still receive every restriction
+    they support, reported as ``partially_confined=True`` because they cannot
+    deny truncation.  A result with both fields ``False`` changes nothing.
+    ``reason`` is always suitable for a diagnostic log line.
     """
 
-    #: ``True`` when access outside the granted lanes is now denied by the kernel.
+    #: ``True`` when the complete policy covers the whole process.
     confined: bool
     #: One-line explanation, ready for a diagnostic log line.
     reason: str
+    #: ``True`` when an ABI 2 kernel enforced every right it supports.
+    partially_confined: bool = False
 
 
 def confine_filesystem(read_exec: Iterable[Path], read_write: Iterable[Path]) -> LandlockReport:
-    """Pin this process and its descendants to the given filesystem lane.
+    """Pin the whole process and its descendants to the given filesystem lane.
 
     After this, the process may read and execute only under *read_exec*, and
-    additionally create/modify/remove only under *read_write* (each grant
-    covers a directory and everything beneath it).  Every other path is denied
-    even for reading.  Requires ``no_new_privs`` already set — the kernel gates
+    additionally create/modify/remove only under *read_write*.  A directory
+    grant covers its whole hierarchy; a non-directory grant covers that exact
+    object, which permits narrow exceptions such as a writable ``/dev/null``
+    without making all of ``/dev`` writable.  Every other path is denied even
+    for reading.  Requires ``no_new_privs`` already set — the kernel gates
     unprivileged Landlock on it — so call
     [`harden_self`][terok_util.hardening.harden_self] first.
 
+    Call this before starting threads on Landlock ABI 1–7; those kernels can
+    restrict only the calling thread, so an already-multithreaded process is
+    left unchanged and reported as unconfined.  ABI 8 applies the ruleset
+    atomically to all threads.
+
     Best-effort and irreversible: never raises; a kernel or build without
-    Landlock returns ``confined=False`` and changes nothing.  A path that does
-    not exist is skipped (there is nothing to reach until it is created, and a
-    parent grant covers that creation).  Connecting to a unix socket is not a
-    filesystem access Landlock gates, so IPC to sockets outside the lane keeps
-    working.
+    Landlock returns ``confined=False`` and changes nothing.  ABI 1 cannot allow
+    cross-directory rename, so it also changes nothing rather than breaking
+    read-write lane semantics.  ABI 2 receives its supported subset and reports
+    ``partially_confined=True`` because it cannot deny truncation.  A path that
+    does not exist is skipped (there is nothing to reach until it is created,
+    and a parent grant covers that creation).  If any existing path cannot be
+    granted, no ruleset is installed.  Pathname unix sockets are intentionally
+    outside this filesystem policy.
     """
     libc = _libc()
-    if libc is None or _landlock_abi(libc) < 1:
+    if libc is None:
         return LandlockReport(False, "landlock unavailable (kernel < 5.13 or no syscall)")
-    ruleset = _create_ruleset(libc, _READ_ACCESS | _WRITE_ACCESS)
+
+    abi = _landlock_abi(libc)
+    if abi < 1:
+        return LandlockReport(False, "landlock unavailable (kernel < 5.13 or no syscall)")
+    if abi < _LANDLOCK_ABI_REFER:
+        return LandlockReport(
+            False,
+            "Landlock ABI 1 cannot allow cross-directory rename/link; filesystem unconfined",
+        )
+
+    if scope_failure := _thread_scope_failure(abi):
+        return LandlockReport(False, scope_failure)
+
+    read_access, write_access = _access_masks(abi)
+    ruleset = _create_ruleset(libc, write_access)
     if ruleset < 0:
         return LandlockReport(False, f"create_ruleset failed (errno {ctypes.get_errno()})")
+
     try:
-        for path in read_exec:
-            _grant_beneath(libc, ruleset, path, _READ_ACCESS)
-        for path in read_write:
-            _grant_beneath(libc, ruleset, path, _READ_ACCESS | _WRITE_ACCESS)
-        if libc.syscall(_NR_RESTRICT_SELF, ruleset, 0) != 0:
+        for paths, access in ((read_exec, read_access), (read_write, write_access)):
+            for path in paths:
+                if failure := _grant_beneath(libc, ruleset, path, access):
+                    return LandlockReport(False, failure)
+
+        flags = _RESTRICT_SELF_TSYNC if abi >= _LANDLOCK_ABI_TSYNC else 0
+        if libc.syscall(_NR_RESTRICT_SELF, ruleset, flags) != 0:
             return LandlockReport(False, f"restrict_self failed (errno {ctypes.get_errno()})")
     finally:
-        os.close(ruleset)
-    return LandlockReport(True, "filesystem confined")
+        with suppress(OSError):
+            os.close(ruleset)
+
+    if abi < _LANDLOCK_ABI_TRUNCATE:
+        return LandlockReport(
+            False,
+            f"filesystem partially confined (Landlock ABI {abi} cannot deny truncation)",
+            partially_confined=True,
+        )
+    return LandlockReport(True, f"filesystem confined (Landlock ABI {abi})")
 
 
 def _landlock_abi(libc: ctypes.CDLL) -> int:
@@ -291,17 +365,73 @@ def _create_ruleset(libc: ctypes.CDLL, handled_access: int) -> int:
     return libc.syscall(_NR_CREATE_RULESET, attr, len(attr), 0)
 
 
-def _grant_beneath(libc: ctypes.CDLL, ruleset: int, path: Path, access: int) -> None:
-    """Grant *access* on *path* and everything beneath it (best-effort)."""
+def _access_masks(abi: int) -> tuple[_FilesystemAccess, _FilesystemAccess]:
+    """Build ABI-compatible read-exec and read-write access masks."""
+    truncate = _FilesystemAccess.TRUNCATE if abi >= _LANDLOCK_ABI_TRUNCATE else _FilesystemAccess(0)
+    refer = _FilesystemAccess.REFER if abi >= _LANDLOCK_ABI_REFER else _FilesystemAccess(0)
+    return (
+        _READ_DIRECTORY_ACCESS,
+        _READ_DIRECTORY_ACCESS | _WRITE_ACCESS_V1 | refer | truncate,
+    )
+
+
+def _process_thread_count() -> int | None:
+    """Return a snapshot of the process's thread count, or ``None`` if unknowable."""
+    try:
+        with os.scandir(_PROCESS_TASK_DIRECTORY) as tasks:
+            return sum(1 for _task in tasks)
+    except OSError:
+        return None
+
+
+def _thread_scope_failure(abi: int) -> str | None:
+    """Explain why *abi* cannot safely restrict this process, if applicable."""
+    if abi >= _LANDLOCK_ABI_TSYNC:
+        return None
+    thread_count = _process_thread_count()
+    if thread_count == 1:
+        return None
+    detail = (
+        "thread count unavailable"
+        if thread_count is None
+        else f"process already has {thread_count} threads"
+    )
+    return f"Landlock ABI {abi} cannot confine the whole process ({detail})"
+
+
+def _grant_beneath(
+    libc: ctypes.CDLL,
+    ruleset: int,
+    path: Path,
+    access: _FilesystemAccess,
+) -> str | None:
+    """Add one path rule, returning a diagnostic on failure.
+
+    Missing paths are deliberately skipped.  Every other failure is returned
+    so the caller can abandon the not-yet-enforced ruleset transaction.
+    """
     try:
         parent_fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
-    except OSError:
-        return
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        return f"open grant path {os.fspath(path)!r} failed (errno {error.errno})"
+
     try:
-        attr = struct.pack(_PATH_BENEATH_ATTR, access, parent_fd)
-        libc.syscall(_NR_ADD_RULE, ruleset, _RULE_PATH_BENEATH, attr, 0)
+        allowed = (
+            access if stat.S_ISDIR(os.fstat(parent_fd).st_mode) else access & _FILE_OBJECT_ACCESS
+        )
+        attr = struct.pack(_PATH_BENEATH_ATTR, allowed, parent_fd)
+        if libc.syscall(_NR_ADD_RULE, ruleset, _RULE_PATH_BENEATH, attr, 0) != 0:
+            return (
+                f"add_rule for grant path {os.fspath(path)!r} failed (errno {ctypes.get_errno()})"
+            )
+    except OSError as error:
+        return f"inspect grant path {os.fspath(path)!r} failed (errno {error.errno})"
     finally:
-        os.close(parent_fd)
+        with suppress(OSError):
+            os.close(parent_fd)
+    return None
 
 
 __all__ = ["HardeningReport", "LandlockReport", "confine_filesystem", "harden_self"]
