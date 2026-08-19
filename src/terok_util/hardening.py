@@ -37,11 +37,12 @@ the floor every isolated child process (terok-sandbox's split supervisor
 children) applies at start-up.
 
 [`confine_filesystem`][terok_util.hardening.confine_filesystem] is the
-companion FS floor: it pins the process to the lane it actually needs
-(read+execute the shared runtime, read+write its own data, touch nothing
-else) via Landlock, so a bug in a binary it shells out to cannot read a
-secret it does not own nor drop a payload outside its lane.  It requires
-the ``no_new_privs`` that ``harden_self`` sets, so it runs second.
+companion filesystem floor.  It uses Landlock to pin the process to its
+lane: read and execute the shared runtime, read and write its own data,
+touch nothing else.  A bug in a spawned binary then cannot read a secret
+outside the lane and cannot write a payload outside the lane.  The kernel
+gates unprivileged Landlock on the ``no_new_privs`` that ``harden_self``
+sets, so ``confine_filesystem`` runs second.
 """
 
 from __future__ import annotations
@@ -189,10 +190,10 @@ def _lock_memory(libc: ctypes.CDLL | None) -> bool:
     return libc.mlockall(_MCL_CURRENT | _MCL_FUTURE) == 0
 
 
-#: Landlock syscall numbers.  They were allocated together on the
-#: architecture-generic table, so x86-64 and arm64 — terok's targets — share
-#: them; any arch where they differ simply fails the ABI probe and degrades to
-#: a no-op.
+#: Landlock syscall numbers.  Linux allocated them on the
+#: architecture-generic table, so terok's targets x86-64 and arm64 share
+#: them.  An architecture with different numbers fails the ABI probe, and
+#: the confinement degrades to a no-op.
 _NR_CREATE_RULESET = 444
 _NR_ADD_RULE = 445
 _NR_RESTRICT_SELF = 446
@@ -270,10 +271,10 @@ class LandlockReport:
     """Whether [`confine_filesystem`][terok_util.hardening.confine_filesystem] took hold.
 
     ``confined`` is ``True`` only when the complete requested policy covers
-    every thread in the process.  ABI 2 kernels still receive every restriction
-    they support, reported as ``partially_confined=True`` because they cannot
-    deny truncation.  A result with both fields ``False`` changes nothing.
-    ``reason`` is always suitable for a diagnostic log line.
+    every thread in the process.  An ABI 2 kernel enforces every right it
+    supports but cannot deny truncation; it reports ``partially_confined=True``.
+    When both fields are ``False``, the process is unchanged.  ``reason``
+    always fits a diagnostic log line.
     """
 
     #: ``True`` when the complete policy covers the whole process.
@@ -287,29 +288,28 @@ class LandlockReport:
 def confine_filesystem(read_exec: Iterable[Path], read_write: Iterable[Path]) -> LandlockReport:
     """Pin the whole process and its descendants to the given filesystem lane.
 
-    After this, the process may read and execute only under *read_exec*, and
-    additionally create/modify/remove only under *read_write*.  A directory
-    grant covers its whole hierarchy; a non-directory grant covers that exact
-    object, which permits narrow exceptions such as a writable ``/dev/null``
-    without making all of ``/dev`` writable.  Every other path is denied even
-    for reading.  Requires ``no_new_privs`` already set — the kernel gates
-    unprivileged Landlock on it — so call
+    After this call the process reads and executes only under *read_exec*.
+    It creates, modifies, and removes only under *read_write*.  A directory
+    grant covers the directory's whole hierarchy.  A non-directory grant
+    covers that exact object — this permits a writable ``/dev/null`` without
+    a writable ``/dev``.  Landlock denies every other path, even for reading.
+    The kernel gates unprivileged Landlock on ``no_new_privs``, so call
     [`harden_self`][terok_util.hardening.harden_self] first.
 
-    Call this before starting threads on Landlock ABI 1–7; those kernels can
-    restrict only the calling thread, so an already-multithreaded process is
-    left unchanged and reported as unconfined.  ABI 8 applies the ruleset
-    atomically to all threads.
+    Call this before starting threads on Landlock ABI 1–7.  Those kernels
+    restrict only the calling thread, so the call leaves an
+    already-multithreaded process unchanged and reports it as unconfined.
+    ABI 8 applies the ruleset to all threads atomically.
 
-    Best-effort and irreversible: never raises; a kernel or build without
-    Landlock returns ``confined=False`` and changes nothing.  ABI 1 cannot allow
-    cross-directory rename, so it also changes nothing rather than breaking
-    read-write lane semantics.  ABI 2 receives its supported subset and reports
-    ``partially_confined=True`` because it cannot deny truncation.  A path that
-    does not exist is skipped (there is nothing to reach until it is created,
-    and a parent grant covers that creation).  If any existing path cannot be
-    granted, no ruleset is installed.  Pathname unix sockets are intentionally
-    outside this filesystem policy.
+    Best-effort and irreversible: the call never raises.  A kernel or build
+    without Landlock changes nothing and returns ``confined=False``.  ABI 1
+    cannot allow cross-directory rename, so it also changes nothing rather
+    than break read-write lane semantics.  ABI 2 receives its supported
+    subset and reports ``partially_confined=True`` because it cannot deny
+    truncation.  The call skips a path that does not exist: a parent grant
+    covers its later creation.  When it cannot grant an existing path, it
+    installs no ruleset.  Pathname unix sockets are intentionally outside
+    this filesystem policy.
     """
     libc = _libc()
     if libc is None:
@@ -407,8 +407,8 @@ def _grant_beneath(
 ) -> str | None:
     """Add one path rule, returning a diagnostic on failure.
 
-    Missing paths are deliberately skipped.  Every other failure is returned
-    so the caller can abandon the not-yet-enforced ruleset transaction.
+    Deliberately skips a missing path.  Returns every other failure, so the
+    caller can abandon the not-yet-enforced ruleset.
     """
     try:
         parent_fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
