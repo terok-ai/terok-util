@@ -35,6 +35,7 @@ slots:
   alpine:
   void:
   mageia:
+  manjaro:
   nix:
 
 phases:

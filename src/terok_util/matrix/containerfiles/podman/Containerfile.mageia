@@ -29,7 +29,7 @@ FROM docker.io/mageia:9
 # (no overlay-on-overlay), just slower.
 
 RUN dnf install -y \
-        podman slirp4netns nftables dnsmasq crun \
+        podman slirp4netns nftables dnsmasq crun e2fsprogs \
         shadow-utils \
         python3 python3-devel \
         git curl ca-certificates bind-utils bash \

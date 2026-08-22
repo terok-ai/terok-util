@@ -28,6 +28,8 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 from terok_util.security import sanitize_tty
 
 from .catalog import (
+    KRUN_PASST_ANNOTATION,
+    KRUN_RUNTIME,
     OWNERSHIP_LABEL,
     RESULTS_MOUNT,
     SLOTS,
@@ -42,10 +44,44 @@ from .inner import inner_script, outer_script
 
 @dataclass(frozen=True)
 class SlotResult:
-    """Outcome of one slot run: pass/fail plus the observed version."""
+    """Outcome of one slot run: pass/fail, observed version, network hint.
+
+    ``network_hint`` is set only on a failing slot whose output carried a
+    host network/DNS error signature — a nudge that the failure may be
+    infrastructure, not the code, so a rerun is worth trying before trusting
+    it.  ``None`` when the slot passed or showed no such signature.
+    """
 
     passed: bool
     observed: str = "?"
+    network_hint: str | None = None
+
+
+# Substrings marking a *host* network/DNS failure (not test logic) in a
+# slot's output.  The matrix runners hit these orders of magnitude more than
+# the same hosts do outside the microVM; flagging them lets a rerun be tried
+# before a network blip is mistaken for a real failure.  Matched
+# case-insensitively; kept conservative (DNS + connection layer) so an
+# intentional connection-refused assertion isn't mislabelled.
+_NETWORK_ERROR_SIGNATURES = (
+    "could not resolve host",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "temporary error (try again later)",  # apk against a CDN
+    "network is unreachable",
+    "connection timed out",
+    "connection reset by peer",
+    "failed to establish a new connection",  # urllib3/requests
+    "tls handshake timeout",
+)
+
+
+def _network_error_signature(line: str) -> str | None:
+    """The sanitized line if it reads as a host network/DNS failure, else ``None``."""
+    lowered = line.lower()
+    if any(sig in lowered for sig in _NETWORK_ERROR_SIGNATURES):
+        return sanitize_tty(line.strip())[:120]
+    return None
 
 
 # The templates are Jinja: shared blocks (ARG/label header, uv bootstrap,
@@ -110,30 +146,35 @@ def run_slot(
     slot_name: str,
     results_dir: Path,
     scope: str = "all",
-    line_prefix: str | None = None,
+    line_prefix: str = "",
 ) -> SlotResult:
     """Run one slot's test container and collect its observed version.
 
-    With *line_prefix*, the container's combined output streams through
-    this process line by line, each line tagged with the prefix — live
-    and attributable when several slots run concurrently.  Each tagged
-    line is emitted as a single ``write`` call so concurrent slots can
-    interleave only between lines, never inside one.
+    Output streams through this process line by line (tagged with
+    *line_prefix* when set — live and attributable when several slots run
+    concurrently; each line is one ``write`` so concurrent slots interleave
+    only between lines).  Each line is also scanned for host network/DNS
+    error signatures; on a failing slot the first match becomes the result's
+    ``network_hint``.
     """
     _write_scripts(config, slot_name, results_dir, scope)
     argv = _run_argv(config, slot_name, results_dir)
-    if line_prefix is None:
-        status = subprocess.run(argv, check=False).returncode  # nosec B603
-    else:
-        with subprocess.Popen(  # nosec B603
-            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
-        ) as proc:
-            stdout = cast(IO[str], proc.stdout)  # guaranteed non-None by stdout=PIPE
-            for line in stdout:
-                sys.stdout.write(f"{line_prefix}{line}")
-                sys.stdout.flush()
-            status = proc.wait()
-    return SlotResult(passed=status == 0, observed=_observed_version(slot_name, results_dir))
+    net_hint: str | None = None
+    with subprocess.Popen(  # nosec B603
+        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+    ) as proc:
+        stdout = cast(IO[str], proc.stdout)  # guaranteed non-None by stdout=PIPE
+        for line in stdout:
+            sys.stdout.write(f"{line_prefix}{line}")
+            sys.stdout.flush()
+            if net_hint is None:
+                net_hint = _network_error_signature(line)
+        status = proc.wait()
+    return SlotResult(
+        passed=status == 0,
+        observed=_observed_version(slot_name, results_dir),
+        network_hint=net_hint if status != 0 else None,
+    )
 
 
 # ── Teardown ───────────────────────────────────────────────────────
@@ -293,11 +334,32 @@ def _run_argv(config: MatrixConfig, slot_name: str, results_dir: Path) -> list[s
             "-e",
             "container=podman",
         ]
+    if config.krun:
+        # Boot the slot as a libkrun microVM: its own kernel, so the carrier's
+        # AppArmor profiles, sysctls, and netns mediation no longer reach the
+        # nested tests.  crun-krun needs /dev/kvm on the host; the passt
+        # annotation gives the guest a real network stack (see the constant)
+        # so in-guest 127.0.0.1 loops back instead of being proxied to the host.
+        argv += [
+            "--runtime",
+            KRUN_RUNTIME,
+            "--device",
+            "/dev/kvm:rw",
+            "--annotation",
+            KRUN_PASST_ANNOTATION,
+        ]
     argv += [
+        # ``:z`` (shared label), not ``:Z`` (private): the source and results
+        # dirs are one shared mount across the parallel slots, and ``:Z``
+        # relabels each to a private per-container SELinux category — so on an
+        # enforcing host the dbus-flavor slots (no ``label=disable``) race,
+        # one slot's relabel making another's ``/results/outer-*.sh``
+        # unreadable ("Permission denied").  ``:z`` relabels to a shared type
+        # every slot can read, and the relabel is idempotent, so no race.
         "-v",
-        f"{config.repo_root}:{SOURCE_MOUNT}:ro,Z",
+        f"{config.repo_root}:{SOURCE_MOUNT}:ro,z",
         "-v",
-        f"{results_dir}:{RESULTS_MOUNT}:rw,Z",
+        f"{results_dir}:{RESULTS_MOUNT}:rw,z",
         f"{config.image_prefix}:{slot_name}",
         "bash",
         f"{RESULTS_MOUNT}/outer-{slot_name}.sh",

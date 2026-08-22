@@ -98,6 +98,9 @@ class MatrixConfig:
         phases: Repo-level test flow.
         containers_dir: Directory of the ``matrix.yml`` (fragments live here).
         repo_root: Build context and bind-mounted source tree.
+        krun: Run each slot as a libkrun microVM (its own kernel) instead of a
+            shared-kernel container.  A run-mode set from ``--krun``, not from
+            ``matrix.yml`` — the CLI injects it after the declaration loads.
     """
 
     image_prefix: str
@@ -108,6 +111,7 @@ class MatrixConfig:
     phases: tuple[Phase, ...]
     containers_dir: Path
     repo_root: Path
+    krun: bool = False
 
     def slot_groups(self, name: str) -> tuple[str, ...]:
         """Dependency groups effective for slot ``name``."""

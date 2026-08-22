@@ -23,7 +23,7 @@ FROM docker.io/library/alpine:3.21
 # that lacks a musllinux wheel; bind-tools provides dig for DNS
 # probes; bash is required by the harness (busybox sh is not bash).
 RUN apk add --no-cache \
-    podman slirp4netns nftables dnsmasq fuse-overlayfs crun \
+    podman slirp4netns nftables dnsmasq fuse-overlayfs crun e2fsprogs util-linux \
     shadow shadow-uidmap \
     python3 \
     git curl ca-certificates bind-tools bash \

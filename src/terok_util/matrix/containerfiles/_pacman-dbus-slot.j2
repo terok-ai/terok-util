@@ -1,0 +1,24 @@
+{#-
+SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+SPDX-License-Identifier: Apache-2.0
+-#}
+{#- The dbus-flavor slot body for the Arch family (manjaro). It installs
+    D-Bus and the build toolchain dbus-python needs. dbus-python has no wheel;
+    meson builds it against the dbus and glib2 headers. Arch ships those
+    headers in the main packages. -#}
+{% include "_header.j2" %}
+
+RUN pacman -Syu --noconfirm --needed \
+        dbus \
+        shadow util-linux findutils \
+        base-devel python dbus glib2 pkgconf meson libffi \
+        git curl ca-certificates bash \
+        $EXTRA_PACKAGES \
+    && rm -rf /var/cache/pacman/pkg/*
+
+# Rolling python3 outruns the pinned matrix interpreter (runtime downloads
+# are off) - provision the managed 3.12 at build time, like the void slot.
+{% include "_uv-python312.j2" %}
+
+RUN useradd -m -s /bin/bash testrunner
+WORKDIR /src

@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+# Manjaro (Arch family, rolling, systemd and AppArmor): dbus flavor.
+#
+# The dbus flavor does not use podman. It has no podman stack and no
+# rootless-podman nesting. It installs D-Bus (the session bus) and the build
+# toolchain dbus-python needs. This slot gives the dbus-flavor consumers
+# (terok-clearance, terok-util) Arch-family coverage. The AppArmor relevance
+# lives in the podman flavor (see podman/Containerfile.manjaro).
+#
+# NOTE: the Manjaro package names are a first estimate. The first matrix run
+# may need adjustments. Arch ships the dev headers in the main package, with
+# no -devel split; base-devel provides the toolchain.
+FROM docker.io/manjarolinux/base:latest
+
+{% include "_pacman-dbus-slot.j2" %}

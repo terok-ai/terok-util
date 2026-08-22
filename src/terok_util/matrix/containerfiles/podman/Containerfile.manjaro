@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+# Manjaro (Arch family, rolling, systemd and AppArmor): podman 6.0.x, pasta.
+#
+# This is the first podman-6 slot, and the AppArmor-enforcing slot. Manjaro
+# ships an enforcing AppArmor profile for /usr/{bin,sbin}/dnsmasq and for
+# passt. AppArmor attaches a profile by pathname, and profiles are not
+# container-namespaced. So on an AppArmor host the profile confines the nested
+# per-container dnsmasq and pasta that the shield stack launches. This
+# reproduces the Manjaro DNS breakage (terok-ai/terok#1246). This slot cannot
+# take the slirp4netns AppArmor workaround the alpine and void slots use:
+# podman 6 removed slirp4netns, so pasta is the only rootless backend.
+#
+# NOTE: the Manjaro package names are a first estimate. The first matrix run
+# may need adjustments (pacman; bind provides dig; the base-devel toolchain).
+FROM docker.io/manjarolinux/base:latest
+
+{% include "_pacman-podman-slot.j2" %}

@@ -29,6 +29,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -74,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, MatrixConfigError) as error:
         print(f"{RED}Error: {error}{RESET}", file=sys.stderr)
         return 2
+    config = replace(config, krun=args.krun)
 
     targets = list(args.slots or config.slots)
     unknown = [name for name in targets if name not in config.slots]
@@ -180,7 +182,6 @@ def _walk_matrix(
     passed: list[str] = []
     skipped: list[str] = []
     failed: list[str] = []
-    observed: dict[str, str] = {}
     runnable: list[str] = []
     for name in targets:
         if reason := _skip_reason(config, name):
@@ -204,10 +205,10 @@ def _walk_matrix(
             results[name] = run_slot(config, name, results_dir, scope=args.scope)
             _print_verdict(config, name, results[name])
     for name in runnable:
-        observed[name] = results[name].observed
         (passed if results[name].passed else failed).append(name)
 
-    _print_summary(config, passed, skipped, failed, observed)
+    within = {name: counts for name in runnable if (counts := _read_slot_skips(results_dir, name))}
+    _print_summary(config, passed, skipped, failed, results, within)
     return 1 if failed else 0
 
 
@@ -278,10 +279,18 @@ def _slot_prefixes(names: list[str]) -> dict[str, str]:
     return {name: f"{TAG}[{name:<{width}}]{RESET} " for name in names}
 
 
+def _network_hint_suffix(result: SlotResult) -> str:
+    """Trailing '[suspected host network error: ...]' when the failure looks like one."""
+    if not result.network_hint:
+        return ""
+    return f" {YELLOW}[suspected host network error: {result.network_hint}]{RESET}"
+
+
 def _print_verdict(config: MatrixConfig, name: str, result: SlotResult) -> None:
     """One PASS/FAIL line with the observed-version summary."""
     verdict = f"{GREEN}==> {name}: PASS" if result.passed else f"{RED}==> {name}: FAIL"
-    print(f"{verdict}{RESET} {_version_summary(config, name, result.observed)}")
+    summary = _version_summary(config, name, result.observed)
+    print(f"{verdict}{RESET} {summary}{_network_hint_suffix(result)}")
 
 
 def _skip_reason(config: MatrixConfig, name: str) -> str:
@@ -300,22 +309,78 @@ def _print_slot_heading(config: MatrixConfig, name: str, scope: str) -> None:
     print(f"    {DIM}scope: {scope}, user: {SLOTS[name].user}{RESET}\n")
 
 
+def _read_slot_skips(results_dir: Path, name: str) -> dict[str, int]:
+    """The per-reason within-slot skip counts the plugin wrote, or ``{}``.
+
+    The in-container plugin writes ``<slot>.skips.json`` into the results
+    mount (see ``matrix.pytest_plugin``); this reads the host side.  A
+    missing or unreadable file means the slot skipped nothing.
+    """
+    path = results_dir / f"{name}.skips.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # A truncated or crafted report can carry null, non-numeric, or negative
+    # counts.  Treat any of those as unreadable, like a bad file, rather than
+    # crash the summary on int(None) or a negative tally.
+    if any(type(v) is not int or v < 0 for v in data.values()):
+        return {}
+    return {str(k): v for k, v in data.items()}
+
+
+def _print_within_slot_skips(within: dict[str, dict[str, int]]) -> None:
+    """The per-slot ``SKIPPED`` block: which tests a runtime could not run.
+
+    Shows, per slot, the count for each reason (the governing marker) so a
+    glance says what still needs a different runtime — ``needs_krun`` under
+    crun, ``needs_podman``/``needs_loopback`` under krun, and so on.
+    """
+    if not within:
+        return
+    print(f"\n{BOLD}SKIPPED (not runnable in this runtime):{RESET}")
+    for name in sorted(within):
+        parts = ", ".join(
+            f"{count}x {reason}"
+            for reason, count in sorted(within[name].items(), key=lambda kv: (-kv[1], kv[0]))
+        )
+        print(f"  {YELLOW}{name}{RESET}: {parts}")
+
+
 def _print_summary(
     config: MatrixConfig,
     passed: list[str],
     skipped: list[str],
     failed: list[str],
-    observed: dict[str, str],
+    results: dict[str, SlotResult],
+    within: dict[str, dict[str, int]],
 ) -> None:
-    """The classic closing PASS/SKIP/FAIL table."""
+    """The closing skip block plus the classic PASS/SKIP/FAIL table.
+
+    A failing slot whose output carried a host network/DNS error signature is
+    flagged (see [`_network_hint_suffix`][terok_util.matrix.cli._network_hint_suffix])
+    so a rerun can be tried before the failure is trusted.  ``results`` omits
+    build-failed slots (they never ran); those show a ``?`` version.
+    """
+    _print_within_slot_skips(within)
     print(f"\n{BOLD}===== Matrix Summary ====={RESET}")
     for name in passed:
-        print(f"  {GREEN}PASS{RESET}: {name} {_version_summary(config, name, observed[name])}")
+        print(
+            f"  {GREEN}PASS{RESET}: {name} {_version_summary(config, name, results[name].observed)}"
+        )
     for name in skipped:
         print(f"  {YELLOW}SKIP{RESET}: {name} ({_skip_reason(config, name)})")
     for name in failed:
+        result = results.get(name)
+        version = _version_summary(config, name, result.observed if result else "?")
+        suffix = _network_hint_suffix(result) if result else ""
+        print(f"  {RED}FAIL{RESET}: {name} {version}{suffix}")
+    if any(r.network_hint for r in results.values()):
         print(
-            f"  {RED}FAIL{RESET}: {name} {_version_summary(config, name, observed.get(name, '?'))}"
+            f"\n  {YELLOW}Some failures look like host network errors "
+            f"(see the flags above) — a rerun may clear them.{RESET}"
         )
 
 
@@ -421,6 +486,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--keep-dangling", action="store_true", help="skip the teardown prune of dangling layers"
+    )
+    parser.add_argument(
+        "--krun",
+        action="store_true",
+        help="run each slot as a libkrun microVM (its own kernel) — needs crun-krun and /dev/kvm",
     )
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument(

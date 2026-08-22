@@ -1,0 +1,30 @@
+{#-
+SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+SPDX-License-Identifier: Apache-2.0
+-#}
+{#- The slot body for the Arch family (manjaro): pacman, podman 6, pasta.
+    podman 6 removed the slirp4netns rootless backend, so this slot cannot
+    take the slirp4netns AppArmor workaround the alpine and void slots use.
+    This is deliberate. pasta is the path that reproduces the AppArmor DNS
+    breakage on Manjaro (terok-ai/terok#1246). -#}
+{% include "_header.j2" %}
+
+# Arch forbids partial upgrades, so the sync, upgrade, and install run in one
+# transaction. bind provides dig. shadow provides newuidmap and newgidmap for
+# the rootless nesting. base-devel builds any sdist without a wheel. This slot
+# has no slirp4netns: podman 6 dropped it, so pasta is the only backend.
+RUN pacman -Syu --noconfirm --needed \
+        podman passt nftables dnsmasq fuse-overlayfs crun e2fsprogs \
+        shadow util-linux findutils \
+        python git curl ca-certificates bind base-devel bash \
+        $EXTRA_PACKAGES \
+    && rm -rf /var/cache/pacman/pkg/*
+
+# The rolling python3 is newer than the pinned matrix interpreter, and runtime
+# downloads are off. Provision the managed 3.12 at build time, like the void
+# slot.
+{% include "_uv-python312.j2" %}
+
+{% include "_rootless-podman-setup.j2" %}
+
+WORKDIR /src

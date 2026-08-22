@@ -50,6 +50,7 @@ def test_inner_exports_the_capability_contract(tmp_path: Path) -> None:
     inner = inner_script(load_fixture(tmp_path), "debian13")
 
     assert "export TEROK_MATRIX=1" in inner
+    assert "export TEROK_SLOT=debian13" in inner  # the skip plugin keys its report on this
     assert "export TEROK_EXPECT=podman,nft,internet" in inner
     assert "export TEROK_EXPECT=${TEROK_EXPECT},hooks" in inner
     assert inner.index("stack-under-test setup") < inner.index("${TEROK_EXPECT},hooks")

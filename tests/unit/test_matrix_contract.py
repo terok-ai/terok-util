@@ -68,6 +68,7 @@ def test_binary_on_path_searches_sbin_dirs(monkeypatch: pytest.MonkeyPatch) -> N
     assert not binary_on_path("no-such-binary-anywhere")
 
 
+@pytest.mark.needs_loopback  # binds a real loopback listener; krun's TSI refuses it
 def test_tcp_reachable_against_a_live_and_dead_port() -> None:
     """The internet probe distinguishes a listening socket from a refusing one."""
     with socket.socket() as listener:

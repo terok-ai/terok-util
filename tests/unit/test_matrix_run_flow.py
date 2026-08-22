@@ -78,8 +78,8 @@ def test_run_slot_writes_scripts_and_reads_the_observed_version(
 ) -> None:
     """Scripts land in the results dir; the recorded version comes back."""
     config = load_fixture(tmp_path)
-    recorded = RecordedRun()
-    monkeypatch.setattr(runner.subprocess, "run", recorded)
+    recorded = RecordedPopen([])
+    monkeypatch.setattr(runner.subprocess, "Popen", recorded)
     results = tmp_path / "results"
     results.mkdir()
     (results / "debian13.podman-version").write_text("5.4.2\n", encoding="utf-8")
@@ -88,6 +88,7 @@ def test_run_slot_writes_scripts_and_reads_the_observed_version(
 
     assert result.passed
     assert result.observed == "5.4.2"
+    assert result.network_hint is None
     assert (results / "outer-debian13.sh").exists()
     assert (results / "inner-debian13.sh").exists()
     (argv,) = recorded.calls
@@ -99,7 +100,7 @@ def test_run_slot_missing_version_file_reads_as_unknown(
 ) -> None:
     """A slot that died before recording its version reports '?', not a crash."""
     config = load_fixture(tmp_path)
-    monkeypatch.setattr(runner.subprocess, "run", RecordedRun(returncode=1))
+    monkeypatch.setattr(runner.subprocess, "Popen", RecordedPopen([], returncode=1))
     results = tmp_path / "results"
     results.mkdir()
 
@@ -107,6 +108,37 @@ def test_run_slot_missing_version_file_reads_as_unknown(
 
     assert not result.passed
     assert result.observed == "?"
+
+
+def test_run_slot_flags_suspected_host_network_error_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing slot whose output shows a DNS/connection error gets a network_hint."""
+    config = load_fixture(tmp_path)
+    dns_line = "fatal: unable to access 'https://github.com/x': Could not resolve host: github.com"
+    monkeypatch.setattr(runner.subprocess, "Popen", RecordedPopen([dns_line], returncode=1))
+    results = tmp_path / "results"
+    results.mkdir()
+
+    result = runner.run_slot(config, "debian13", results)
+
+    assert not result.passed
+    assert result.network_hint is not None
+    assert "Could not resolve host" in result.network_hint
+
+
+def test_run_slot_does_not_flag_a_network_line_when_it_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A network blip a passing slot recovered from is not flagged as the cause."""
+    config = load_fixture(tmp_path)
+    blip = "warning: Could not resolve host: cdn.example (retrying)"
+    monkeypatch.setattr(runner.subprocess, "Popen", RecordedPopen([blip], returncode=0))
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "debian13.podman-version").write_text("5.4.2\n", encoding="utf-8")
+
+    assert runner.run_slot(config, "debian13", results).network_hint is None
 
 
 def test_prune_targets_only_this_harness_and_niceness_wraps(

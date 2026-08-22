@@ -9,7 +9,7 @@ FROM quay.io/podman/stable:latest
 {% include "_header.j2" %}
 
 RUN dnf install -y \
-    nftables dnsmasq python3 python3-pip \
+    nftables dnsmasq python3 python3-pip e2fsprogs \
     git curl bind-utils \
     $EXTRA_PACKAGES \
     && dnf clean all

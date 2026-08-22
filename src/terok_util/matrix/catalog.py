@@ -36,9 +36,44 @@ PYTHON_VERSION = "3.12"
 OWNERSHIP_LABEL = "io.terok.matrix-test"
 
 # Env vars of the in-container capability contract: MATRIX_ENV marks a
-# matrix run; EXPECT_ENV carries the comma-separated capability list.
+# matrix run; EXPECT_ENV carries the comma-separated capability list;
+# KERNEL_ISOLATED_ENV is set only when the slot runs under krun (its own
+# kernel), so tests marked ``needs_own_kernel`` — untestable under a shared
+# kernel, where the carrier's AppArmor/sysctl/netns state leaks in — run.
 MATRIX_ENV = "TEROK_MATRIX"
 EXPECT_ENV = "TEROK_EXPECT"
+KERNEL_ISOLATED_ENV = "TEROK_KERNEL_ISOLATED"
+# The slot name, exported into every matrix container so the runtime-aware
+# skip plugin can write its per-reason skip counts to a slot-named file the
+# runner aggregates into the closing SKIPPED summary.
+SLOT_ENV = "TEROK_SLOT"
+
+# The podman OCI-runtime name that boots a slot as a libkrun microVM (its
+# own kernel).  The name is a site-defined ``[engine.runtimes]`` entry; this
+# is the conventional one and the default the ``--krun`` flag selects.
+KRUN_RUNTIME = "krun"
+
+# crun-krun annotation that switches libkrun from its default TSI networking
+# (Transparent Socket Impersonation — socket calls proxied to the host, so
+# the guest has no real stack and 127.0.0.1 never loops back inside it) to a
+# real virtio-net stack backed by passt.  Without it the story tests'
+# in-guest broker<->upstream loopback hops are refused.  passt ships with
+# rootless podman, so the host already has it.
+KRUN_PASST_ANNOTATION = "krun.use_passt=1"
+
+# Under krun the slot's rootfs is virtiofs, which root-squashes the subuid
+# ``mkdir``/``chown`` rootless podman does as it unpacks/runs images
+# (virtiofsd runs as the host user).  A loop-mounted ext4 image is a
+# guest-kernel-owned filesystem where those ids resolve; the nested-podman
+# store and buildah's per-``RUN``-step rootfs (``TMPDIR``) live on it.  The
+# mount point is ``TMPDIR`` itself and is deliberately short: pytest hangs
+# ``tmp_path`` off ``TMPDIR``, and the socket tests would blow the 107-byte
+# ``AF_UNIX`` limit under a long prefix.  The image lives in the container's
+# own (``--rm``-cleaned) rootfs, sparse — the size is a ceiling against a
+# runaway pull, not an allocation.
+KRUN_DISK_IMG = "/krun-disk.img"
+KRUN_DISK_SIZE = "16G"
+KRUN_DISK_MOUNT = "/kd"
 
 # Shared Containerfile families a matrix.yml may select.
 FLAVORS = ("podman", "dbus")
@@ -82,6 +117,15 @@ class SlotSpec:
     user: str = "testrunner"
     kind: SlotKind = SlotKind.CONTAINER
 
+    def runs_nested_podman(self, flavor: str) -> bool:
+        """Whether this slot runs nested rootless podman under *flavor*.
+
+        True only for a container-kind slot on the ``podman`` flavor: the nix
+        slot has no podman inside, and the dbus flavor runs none.  This gates
+        the resolv.conf fix and, under krun, the device/disk/tmp setup.
+        """
+        return flavor == "podman" and self.kind is SlotKind.CONTAINER
+
 
 # Expected podman versions are pinned to the exact distro-shipped point
 # release.  A mismatch is surfaced as a WARNING, never a failure — distro
@@ -97,5 +141,6 @@ SLOTS: dict[str, SlotSpec] = {
     "alpine": SlotSpec(expected_podman="5.3.2", non_systemd=True),
     "void": SlotSpec(expected_podman="latest", non_systemd=True),
     "mageia": SlotSpec(expected_podman="4.9.5"),
+    "manjaro": SlotSpec(expected_podman="6.0.2"),
     "nix": SlotSpec(kind=SlotKind.NIX),
 }
