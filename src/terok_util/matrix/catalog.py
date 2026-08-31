@@ -141,6 +141,6 @@ SLOTS: dict[str, SlotSpec] = {
     "alpine": SlotSpec(expected_podman="5.3.2", non_systemd=True),
     "void": SlotSpec(expected_podman="latest", non_systemd=True),
     "mageia": SlotSpec(expected_podman="4.9.5"),
-    "manjaro": SlotSpec(expected_podman="6.0.2"),
+    "manjaro": SlotSpec(expected_podman="6.1.0"),
     "nix": SlotSpec(kind=SlotKind.NIX),
 }
