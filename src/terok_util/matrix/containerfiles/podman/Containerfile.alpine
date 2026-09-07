@@ -21,12 +21,14 @@ FROM docker.io/library/alpine:3.21
 
 # musl toolchain (build-base + *-dev) lets uv build any dependency
 # that lacks a musllinux wheel; bind-tools provides dig for DNS
-# probes; bash is required by the harness (busybox sh is not bash).
+# probes; bash is required by the harness (busybox sh is not bash);
+# git-daemon carries git-http-backend, which Alpine keeps out of git
+# and the sandbox's git gate serves smart HTTP through.
 RUN apk add --no-cache \
     podman slirp4netns nftables dnsmasq fuse-overlayfs crun e2fsprogs util-linux \
     shadow shadow-uidmap \
     python3 \
-    git curl ca-certificates bind-tools bash \
+    git git-daemon curl ca-certificates bind-tools bash \
     build-base python3-dev libffi-dev \
     $EXTRA_PACKAGES
 

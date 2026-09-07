@@ -39,6 +39,7 @@ def test_shared_blocks_render_with_their_slot_knobs(tmp_path: Path) -> None:
     # non-systemd slots, and musl images need an explicit bash login shell.
     assert 'default_rootless_network_cmd = "slirp4netns"' in alpine
     assert "useradd -m -s /bin/bash testrunner" in alpine
+    assert "git-daemon" in alpine  # git-http-backend, for the sandbox's git gate
     assert f"ghcr.io/astral-sh/uv:{UV_IMAGE_TAG}" in alpine
 
     debian13 = render_containerfile(config, "debian13")
@@ -89,6 +90,7 @@ def test_run_argv_matches_the_flavor_and_kind(tmp_path: Path) -> None:
     podman_argv = _run_argv(config, "debian13", results)
     assert "--privileged" in podman_argv
     assert "/dev/fuse:rw" in podman_argv
+    assert "--init" in podman_argv
     assert podman_argv[-2:] == ["bash", "/results/outer-debian13.sh"]
     # ``:z`` (shared SELinux label), not ``:Z``: /src and /results are shared
     # across parallel slots, so a private label would race (see _run_argv).

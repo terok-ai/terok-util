@@ -310,6 +310,10 @@ def _run_argv(config: MatrixConfig, slot_name: str, results_dir: Path) -> list[s
         "run",
         "--rm",
         "--replace",
+        # An init as PID 1 reaps the orphans tests leave behind.  The outer
+        # script execs into ``su``, which waits for its own child only, so a
+        # test that kills a process tree would otherwise see zombies survive.
+        "--init",
         "--name",
         f"{config.image_prefix}-{slot_name}",
         # The image already carries the ownership label, but the teardown
