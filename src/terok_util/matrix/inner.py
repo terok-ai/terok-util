@@ -237,7 +237,7 @@ def _krun_real_disk(user: str) -> list[str]:
 
 
 def _krun_tmpdir_export() -> list[str]:
-    """Point ``TMPDIR`` at the ext4 disk so buildah's RUN-step rootfs lands there.
+    """Point ``TMPDIR`` and the uv cache at the ext4 disk.
 
     Runs in the inner (test-user) script.  buildah scaffolds each ``RUN``
     step's throwaway-container rootfs under ``GetTempDir()`` (``TMPDIR`` or
@@ -246,8 +246,12 @@ def _krun_tmpdir_export() -> list[str]:
     [`_krun_real_disk`][terok_util.matrix.inner._krun_real_disk].  The mount
     point *is* ``TMPDIR`` (not a subdir) and is short so pytest's
     ``TMPDIR``-rooted Unix sockets stay under the 107-byte ``AF_UNIX`` limit.
+
+    The uv cache moves too: sdists build there, and meson refuses a build
+    dir whose files are stamped in the future — virtiofs stamps them with
+    the host clock, which runs a few milliseconds ahead of the guest's.
     """
-    return [f"export TMPDIR={KRUN_DISK_MOUNT}"]
+    return [f"export TMPDIR={KRUN_DISK_MOUNT}", f"export UV_CACHE_DIR={KRUN_DISK_MOUNT}/uv-cache"]
 
 
 def _init_system_proof(slot_name: str) -> list[str]:

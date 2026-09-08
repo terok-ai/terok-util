@@ -110,12 +110,19 @@ class SlotSpec:
             these slots exist to prove the systemd-free floor.
         user: Non-root user baked into the image (uid 1000).
         kind: Driving mode, see [`SlotKind`][terok_util.matrix.catalog.SlotKind].
+        pasta_symlink: The distro ships ``/usr/bin/pasta`` as a symlink to
+            ``passt`` (upstream's default; Debian hard-links, Fedora builds
+            it apart).  AppArmor attaches profiles by the resolved path and
+            is not container-namespaced, so on a host with the distro
+            ``passt`` profile the nested pasta runs under that profile and
+            loses its netns — the runner skips such slots there.
     """
 
     expected_podman: str = "latest"
     non_systemd: bool = False
     user: str = "testrunner"
     kind: SlotKind = SlotKind.CONTAINER
+    pasta_symlink: bool = False
 
     def runs_nested_podman(self, flavor: str) -> bool:
         """Whether this slot runs nested rootless podman under *flavor*.
@@ -137,10 +144,10 @@ SLOTS: dict[str, SlotSpec] = {
     "debian13": SlotSpec(expected_podman="5.4.2"),
     "fedora43": SlotSpec(expected_podman="5.8.4"),
     "fedora44": SlotSpec(expected_podman="5.8.4"),
-    "podman": SlotSpec(expected_podman="latest", user="podman"),
-    "alpine": SlotSpec(expected_podman="5.3.2", non_systemd=True),
-    "void": SlotSpec(expected_podman="latest", non_systemd=True),
+    "podman": SlotSpec(expected_podman="5.8.4", user="podman"),
+    "alpine": SlotSpec(expected_podman="5.3.2", non_systemd=True, pasta_symlink=True),
+    "void": SlotSpec(expected_podman="5.8.3", non_systemd=True, pasta_symlink=True),
     "mageia": SlotSpec(expected_podman="4.9.5"),
-    "manjaro": SlotSpec(expected_podman="6.1.0"),
+    "manjaro": SlotSpec(expected_podman="6.1.0", pasta_symlink=True),
     "nix": SlotSpec(kind=SlotKind.NIX),
 }

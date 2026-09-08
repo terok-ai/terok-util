@@ -98,6 +98,10 @@ class MatrixConfig:
         phases: Repo-level test flow.
         containers_dir: Directory of the ``matrix.yml`` (fragments live here).
         repo_root: Build context and bind-mounted source tree.
+        host_confines_pasta: The host's AppArmor ``passt`` profile is the
+            distro's, so a nested pasta reached through a symlink loses its
+            netns; slots with such a pasta are skipped.  Probed once in
+            ``main``; never set under ``krun``.
         krun: Run each slot as a libkrun microVM (its own kernel) instead of a
             shared-kernel container.  A run-mode set from ``--krun``, not from
             ``matrix.yml`` — the CLI injects it after the declaration loads.
@@ -112,6 +116,7 @@ class MatrixConfig:
     containers_dir: Path
     repo_root: Path
     krun: bool = False
+    host_confines_pasta: bool = False
 
     def slot_groups(self, name: str) -> tuple[str, ...]:
         """Dependency groups effective for slot ``name``."""

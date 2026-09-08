@@ -40,7 +40,6 @@ RUN xbps-install -Suy xbps \
 {% include "_uv-python312.j2" %}
 
 {% set user_shell = ' -s /bin/bash' %}
-{% set rootless_network_cmd = 'slirp4netns' %}
 {% include "_rootless-podman-setup.j2" %}
 
 WORKDIR /src

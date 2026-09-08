@@ -287,6 +287,7 @@ def stubbed_host(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(cli, "prune_dangling", fake_prune)
     monkeypatch.setattr(cli, "sweep_containers", fake_sweep)
     monkeypatch.setattr(cli, "external_storage_leftovers", lambda: journal["external"])
+    monkeypatch.setattr(cli, "_host_confines_pasta", lambda: False)
     monkeypatch.setenv("CONTAINERS_CONF", "/nonexistent/containers.conf")
     return journal
 
@@ -344,6 +345,40 @@ def test_walk_skips_arch_limited_slots(
     assert stubbed_host["built"] == ["debian13", "podman", "nix"]
     assert "alpine" not in stubbed_host["ran"]
     assert "SKIP: alpine" in capsys.readouterr().out
+
+
+def test_walk_skips_symlinked_pasta_slots_when_the_host_confines_pasta(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The fixture's alpine slot is skipped with the reason, and the warning brackets the run."""
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(cli, "_host_confines_pasta", lambda: True)
+
+    assert cli.main(_args(tmp_path)) == 0
+
+    assert "alpine" not in stubbed_host["ran"]
+    out = capsys.readouterr().out
+    assert "SKIP: alpine (host AppArmor confines nested pasta)" in out
+    assert out.count("WARNING: this host's AppArmor") == 2
+
+
+def test_krun_runs_symlinked_pasta_slots_regardless_of_the_host(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Under krun the slot has its own kernel, so the host's profile is not consulted."""
+    monkeypatch.setattr(cli.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(cli, "_host_confines_pasta", lambda: True)
+
+    assert cli.main(_args(tmp_path, "--krun")) == 0
+
+    assert "alpine" in stubbed_host["ran"]
+    assert "confines nested pasta" not in capsys.readouterr().out
 
 
 def test_walk_records_build_failures_and_keeps_going(
@@ -494,6 +529,44 @@ def test_wall_time_survives_an_interrupt(
 
 def _raise_interrupt(*_args: Any, **_kwargs: Any) -> runner.SlotResult:
     raise KeyboardInterrupt
+
+
+# ── cli: AppArmor passt preflight ──────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("enabled", "profile", "disabled", "confines"),
+    [
+        ("Y\n", "profile passt /usr/bin/passt {\n}\n", False, True),
+        ("N\n", "profile passt /usr/bin/passt {\n}\n", False, False),
+        ("Y\n", "profile passt {\n  include <abstractions/pasta>\n}\n", False, False),
+        ("Y\n", "profile passt /usr/bin/passt {\n}\n", True, False),
+        ("Y\n", None, False, False),
+    ],
+    ids=["distro profile", "apparmor off", "replaced profile", "disabled profile", "no passt"],
+)
+def test_host_confines_pasta_reads_the_profile_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: str,
+    profile: str | None,
+    disabled: bool,
+    confines: bool,
+) -> None:
+    """Only the distro's passt profile, enforced and loaded, confines a nested pasta."""
+    switch = tmp_path / "enabled"
+    switch.write_text(enabled, encoding="utf-8")
+    profile_path = tmp_path / "apparmor.d" / "usr.bin.passt"
+    profile_path.parent.mkdir()
+    if profile is not None:
+        profile_path.write_text(profile, encoding="utf-8")
+    if disabled:
+        (profile_path.parent / "disable").mkdir()
+        (profile_path.parent / "disable" / profile_path.name).symlink_to(profile_path)
+    monkeypatch.setattr(cli, "_APPARMOR_ENABLED", switch)
+    monkeypatch.setattr(cli, "_PASST_PROFILE", profile_path)
+
+    assert cli._host_confines_pasta() is confines
 
 
 # ── cli: keyring preflight ─────────────────────────────────────────

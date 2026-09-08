@@ -75,7 +75,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, MatrixConfigError) as error:
         print(f"{RED}Error: {error}{RESET}", file=sys.stderr)
         return 2
-    config = replace(config, krun=args.krun)
+    config = replace(
+        config, krun=args.krun, host_confines_pasta=not args.krun and _host_confines_pasta()
+    )
 
     targets = list(args.slots or config.slots)
     unknown = [name for name in targets if name not in config.slots]
@@ -99,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     _warn_keyring()
+    if config.host_confines_pasta:
+        print(_pasta_warning())
     with tempfile.TemporaryDirectory(prefix=f"{config.image_prefix}-matrix-") as scratch:
         results_dir = Path(scratch)
         # The container's uid-1000 user (an unknown host subuid) must write
@@ -298,6 +302,8 @@ def _skip_reason(config: MatrixConfig, name: str) -> str:
     slot = config.slots[name]
     if platform.machine() in slot.skip_arches:
         return slot.skip_reason or "not supported on this architecture"
+    if config.host_confines_pasta and SLOTS[name].pasta_symlink:
+        return "host AppArmor confines nested pasta"
     return ""
 
 
@@ -382,6 +388,8 @@ def _print_summary(
             f"\n  {YELLOW}Some failures look like host network errors "
             f"(see the flags above) — a rerun may clear them.{RESET}"
         )
+    if config.host_confines_pasta:
+        print(f"\n{_pasta_warning()}")
 
 
 # ── Version reporting ──────────────────────────────────────────────
@@ -450,6 +458,52 @@ def _warn_keyring() -> None:
         f"    {BOLD}keyring = false{YELLOW}\n"
         "\n"
         f"  See: https://terok-ai.github.io/terok/kernel-keyring/{RESET}\n"
+    )
+
+
+#: AppArmor's switch: ``Y`` when the LSM is active.
+_APPARMOR_ENABLED = Path("/sys/module/apparmor/parameters/enabled")
+#: The distro profile for passt; a ``disable/`` entry next to it unloads it.
+_PASST_PROFILE = Path("/etc/apparmor.d/usr.bin.passt")
+
+
+def _host_confines_pasta() -> bool:
+    """Whether this host's AppArmor ``passt`` profile would confine a nested pasta.
+
+    AppArmor attaches by the resolved executable path, container or not,
+    so a slot whose pasta is a symlink to passt runs under this profile
+    and loses its netns (dmesg: ``profile="passt" DENIED``).  Both fixes
+    the superbuild documents show in the files: a replacement profile
+    carries pasta's rules, a disabled one has its ``disable/`` entry.
+    No root needed.
+    """
+    profile = _read_text(_PASST_PROFILE)
+    return (
+        _read_text(_APPARMOR_ENABLED).strip() == "Y"
+        and bool(profile)
+        and "abstractions/pasta" not in profile
+        and not (_PASST_PROFILE.parent / "disable" / _PASST_PROFILE.name).exists()
+    )
+
+
+def _read_text(path: Path) -> str:
+    """The file's text, or empty when absent or unreadable."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _pasta_warning() -> str:
+    """The upfront and closing warning for a host that confines nested pasta."""
+    slots = ", ".join(name for name, spec in SLOTS.items() if spec.pasta_symlink)
+    return (
+        f"{YELLOW}WARNING: this host's AppArmor 'passt' profile confines nested pasta\n"
+        "\n"
+        f"  Slots whose pasta is a symlink to passt ({slots}) lose their netns\n"
+        '  under it (dmesg: apparmor="DENIED" profile="passt") and are skipped.\n'
+        "  Fix it on the host: see terok-superbuild/apparmor/README.md.\n"
+        f"  Or run with --krun, which gives every slot its own kernel.{RESET}\n"
     )
 
 

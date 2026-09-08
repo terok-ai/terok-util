@@ -35,9 +35,9 @@ def test_shared_blocks_render_with_their_slot_knobs(tmp_path: Path) -> None:
     config = load_fixture(tmp_path)
 
     alpine = render_containerfile(config, "alpine")
-    # AppArmor pasta workaround is base behavior for the podman flavor's
-    # non-systemd slots, and musl images need an explicit bash login shell.
-    assert 'default_rootless_network_cmd = "slirp4netns"' in alpine
+    # Every slot runs its distro's default rootless backend, and musl
+    # images need an explicit bash login shell.
+    assert "default_rootless_network_cmd" not in alpine
     assert "useradd -m -s /bin/bash testrunner" in alpine
     assert f"ghcr.io/astral-sh/uv:{UV_IMAGE_TAG}" in alpine
 
@@ -130,6 +130,20 @@ def test_inner_script_signals_kernel_isolation_only_under_krun(tmp_path: Path) -
     config = load_fixture(tmp_path)
     assert "TEROK_KERNEL_ISOLATED" not in inner_script(config, "debian13")
     assert "export TEROK_KERNEL_ISOLATED=1" in inner_script(replace(config, krun=True), "debian13")
+
+
+def test_krun_inner_moves_the_uv_cache_onto_the_guest_disk(tmp_path: Path) -> None:
+    """Under krun sdists build on the ext4 disk, whose mtimes come from the guest clock."""
+    from dataclasses import replace
+
+    from terok_util.matrix.catalog import KRUN_DISK_MOUNT
+    from terok_util.matrix.inner import inner_script
+
+    config = load_fixture(tmp_path)
+    assert "UV_CACHE_DIR" not in inner_script(config, "debian13")
+    assert f"UV_CACHE_DIR={KRUN_DISK_MOUNT}/uv-cache" in inner_script(
+        replace(config, krun=True), "debian13"
+    )
 
 
 def test_krun_outer_nudges_the_guest_clock(tmp_path: Path) -> None:

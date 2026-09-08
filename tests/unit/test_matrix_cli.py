@@ -53,7 +53,7 @@ def test_list_shows_slots_with_version_expectations(
 
     out = capsys.readouterr().out
     assert "debian13 (expected podman 5.4.2)" in out
-    assert "podman (podman latest, version pinned by upstream)" in out
+    assert "podman (expected podman 5.8.4)" in out
     assert "nix (nix-wrapped Python)" in out
 
 

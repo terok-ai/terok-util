@@ -8,9 +8,7 @@
 # passt. AppArmor attaches a profile by pathname, and profiles are not
 # container-namespaced. So on an AppArmor host the profile confines the nested
 # per-container dnsmasq and pasta that the shield stack launches. This
-# reproduces the Manjaro DNS breakage (terok-ai/terok#1246). This slot cannot
-# take the slirp4netns AppArmor workaround the alpine and void slots use:
-# podman 6 removed slirp4netns, so pasta is the only rootless backend.
+# reproduces the Manjaro DNS breakage (terok-ai/terok#1246).
 #
 # NOTE: the Manjaro package names are a first estimate. The first matrix run
 # may need adjustments (pacman; bind provides dig; the base-devel toolchain).

@@ -33,7 +33,6 @@ RUN apk add --no-cache \
 {% include "_uv-binary.j2" %}
 
 {% set user_shell = ' -s /bin/bash' %}
-{% set rootless_network_cmd = 'slirp4netns' %}
 {% include "_rootless-podman-setup.j2" %}
 
 WORKDIR /src
