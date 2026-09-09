@@ -153,8 +153,7 @@ def run_slot(
 
     Two shapes, one result: an ``--init`` container that *is* the outer
     script, or — for the slots that boot systemd under krun — a booted
-    microVM the outer script is executed inside (see
-    [`_run_in_booted_slot`][terok_util.matrix.runner._run_in_booted_slot]).
+    microVM the outer script is executed inside (``_run_in_booted_slot``).
 
     Output streams through this process line by line (tagged with
     *line_prefix* when set — live and attributable when several slots run
