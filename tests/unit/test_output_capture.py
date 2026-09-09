@@ -65,6 +65,22 @@ def test_journal_stream_sink_collapses_carriage_returns(
     assert b"10%" not in datagram
 
 
+def test_journal_stream_sink_keeps_a_pty_line_that_ends_in_cr_lf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pty writes ``\\r\\n``; the line before it is the message, not the empty tail."""
+    receiver = _bind(tmp_path, monkeypatch)
+    try:
+        sink = oc._JournalStreamSink("terok", {})
+        sink.write(b"hello\r\n10%\r100% done\r\n")
+        first, second = receiver.recv(65536), receiver.recv(65536)
+        sink.close()
+    finally:
+        receiver.close()
+    assert b"MESSAGE=hello\n" in first
+    assert b"MESSAGE=100% done\n" in second
+
+
 def test_journal_stream_sink_flushes_tail_on_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

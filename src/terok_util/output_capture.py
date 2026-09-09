@@ -120,7 +120,12 @@ class _JournalStreamSink:
         return f"output logged to journald — {query}"
 
     def _emit(self, line: bytes) -> None:
-        """Send one line as a journal entry (drops CR-progress redraws)."""
+        """Send one line as a journal entry (drops CR-progress redraws).
+
+        A pty ends every line with ``\\r\\n``, so the trailing ``\\r`` goes
+        first; only then is the last ``\\r``-separated segment the line.
+        """
+        line = line.rstrip(b"\r")
         if b"\r" in line:
             line = line.rsplit(b"\r", 1)[-1]
         # Encode via the writer's MESSAGE path by decoding leniently: captured
