@@ -75,6 +75,20 @@ KRUN_DISK_IMG = "/krun-disk.img"
 KRUN_DISK_SIZE = "16G"
 KRUN_DISK_MOUNT = "/kd"
 
+#: The image's own init, run as PID 1 by the slots that boot systemd under
+#: krun (see [`SlotSpec.boots_systemd`][terok_util.matrix.catalog.SlotSpec.boots_systemd]).
+#: Every systemd distro ships it, so the path needs no per-slot override.
+SYSTEMD_INIT = "/sbin/init"
+
+#: ``/proc/1/comm`` of a booted systemd — what the init-system proof compares
+#: against to tell a real PID 1 systemd from an init shim.
+SYSTEMD_COMM = "systemd"
+
+#: The per-user systemd manager, formatted with the test user's uid.  Starting
+#: it explicitly is what gives the test user a ``/run/user/<uid>`` and a
+#: reachable ``systemd --user`` on images whose PAM stack lacks ``pam_systemd``.
+USER_MANAGER_UNIT = "user@{uid}.service"
+
 # Shared Containerfile families a matrix.yml may select.
 FLAVORS = ("podman", "dbus")
 
@@ -132,6 +146,17 @@ class SlotSpec:
         the resolv.conf fix and, under krun, the device/disk/tmp setup.
         """
         return flavor == "podman" and self.kind is SlotKind.CONTAINER
+
+    def boots_systemd(self, flavor: str, krun: bool) -> bool:
+        """Whether this slot runs systemd as PID 1 instead of the outer script.
+
+        Only under krun: the microVM owns its kernel and cgroup tree, so the
+        image's systemd can be PID 1 and give the tests a real per-user
+        manager.  Under a shared kernel the slot stays a plain ``--init``
+        container, and the systemd-free floor slots stay systemd-free
+        everywhere.
+        """
+        return krun and self.runs_nested_podman(flavor) and not self.non_systemd
 
 
 # Expected podman versions are pinned to the exact distro-shipped point

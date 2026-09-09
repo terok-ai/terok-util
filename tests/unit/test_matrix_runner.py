@@ -123,6 +123,69 @@ def test_run_argv_injects_krun_runtime_and_kvm_when_enabled(tmp_path: Path) -> N
     assert krun_argv[krun_argv.index("--annotation") + 1] == "krun.use_passt=1"
 
 
+def test_run_argv_boots_systemd_as_pid1_for_krun_slots_that_ship_it(tmp_path: Path) -> None:
+    """Under krun a systemd slot runs its own init; the systemd-free floor does not."""
+    from dataclasses import replace
+
+    config = load_fixture(tmp_path)
+    results = tmp_path / "results"
+    krun = replace(config, krun=True)
+
+    debian13 = _run_argv(krun, "debian13", results)
+    assert "--systemd=always" in debian13
+    # catatonit in front of systemd would leave the tests without a user manager.
+    assert "--init" not in debian13
+    assert debian13[-1] == "/sbin/init"
+    # Everything else about the krun run is unchanged.
+    assert "--privileged" in debian13
+    assert debian13[debian13.index("--runtime") + 1] == "krun"
+    assert "/dev/kvm:rw" in debian13
+
+    # The floor slots have no systemd to boot, and no run without --krun does.
+    alpine = _run_argv(krun, "alpine", results)
+    assert "--init" in alpine
+    assert alpine[-2:] == ["bash", "/results/outer-alpine.sh"]
+    assert "--systemd=always" not in _run_argv(config, "debian13", results)
+
+
+def test_run_argv_detached_only_adds_the_flag(tmp_path: Path) -> None:
+    """The booted shape is the same command line, backgrounded — podman would
+    otherwise never return from a container whose command is its init."""
+    from dataclasses import replace
+
+    krun = replace(load_fixture(tmp_path), krun=True)
+    results = tmp_path / "results"
+
+    foreground = _run_argv(krun, "debian13", results)
+    detached = _run_argv(krun, "debian13", results, detached=True)
+
+    assert detached[:3] == ["podman", "run", "-d"]
+    assert detached[3:] == foreground[2:]
+
+
+def test_krun_outer_starts_the_user_manager_and_proves_systemd_is_pid1(tmp_path: Path) -> None:
+    """A booted slot owes the test user a reachable ``systemd --user``, and must
+    prove PID 1 really is systemd — the mirror of the non-systemd inversion."""
+    from dataclasses import replace
+
+    from terok_util.matrix.inner import outer_script
+
+    config = load_fixture(tmp_path)
+    krun = replace(config, krun=True)
+
+    debian13 = outer_script(krun, "debian13")
+    assert 'systemctl start "user@$(id -u testrunner).service"' in debian13
+    assert "FATAL: user manager for testrunner did not start" in debian13
+    assert "must boot systemd as PID 1" in debian13
+    # The manager is up before the tests inherit XDG_RUNTIME_DIR through ``su``.
+    assert debian13.index("systemctl start") < debian13.index("exec su - testrunner")
+
+    # Not for the systemd-free floor, and not for a shared-kernel run.
+    assert "systemctl start" not in outer_script(krun, "alpine")
+    assert "systemctl start" not in outer_script(config, "debian13")
+    assert "must boot systemd as PID 1" not in outer_script(config, "debian13")
+
+
 def test_inner_script_signals_kernel_isolation_only_under_krun(tmp_path: Path) -> None:
     """The in-container env carries TEROK_KERNEL_ISOLATED only when the slot runs under krun."""
     from dataclasses import replace
@@ -202,7 +265,10 @@ def test_krun_podman_slot_ext4_disk_for_store_and_short_tmpdir(tmp_path: Path) -
     assert "mount --bind /kd/store /home/testrunner/.local/share/containers" in outer
     # The rootless runroot binds to the ext4 too (podman 4.x subuid-chowns its
     # runroot resolv.conf under keep-id, which virtiofs squashes); path stays put.
-    assert 'mount --bind /kd/run /run/user/"$(id -u testrunner)"' in outer
+    # Only where systemd does not own /run/user/<uid>: on a booted slot that
+    # bind would hide the user manager's sockets from the test user.
+    assert 'mount --bind /kd/run /run/user/"$(id -u testrunner)"' in outer_script(krun, "alpine")
+    assert "mount --bind /kd/run" not in outer
     # No workspace bind: fuse-overlayfs drives the context overlay on virtiofs.
     assert "mount --bind /kd/workspace" not in outer
     # TMPDIR is the short mount point itself (buildah RUN-step rootfs on ext4;

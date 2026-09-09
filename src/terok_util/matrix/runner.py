@@ -34,6 +34,7 @@ from .catalog import (
     RESULTS_MOUNT,
     SLOTS,
     SOURCE_MOUNT,
+    SYSTEMD_INIT,
     UV_IMAGE_TAG,
     UV_MANAGED_PYTHON_DIR,
     SlotKind,
@@ -150,6 +151,11 @@ def run_slot(
 ) -> SlotResult:
     """Run one slot's test container and collect its observed version.
 
+    Two shapes, one result: an ``--init`` container that *is* the outer
+    script, or — for the slots that boot systemd under krun — a booted
+    microVM the outer script is executed inside (see
+    [`_run_in_booted_slot`][terok_util.matrix.runner._run_in_booted_slot]).
+
     Output streams through this process line by line (tagged with
     *line_prefix* when set — live and attributable when several slots run
     concurrently; each line is one ``write`` so concurrent slots interleave
@@ -158,7 +164,23 @@ def run_slot(
     ``network_hint``.
     """
     _write_scripts(config, slot_name, results_dir, scope)
-    argv = _run_argv(config, slot_name, results_dir)
+    if SLOTS[slot_name].boots_systemd(config.flavor, config.krun):
+        status, net_hint = _run_in_booted_slot(config, slot_name, results_dir, line_prefix)
+    else:
+        status, net_hint = _stream(_run_argv(config, slot_name, results_dir), line_prefix)
+    return SlotResult(
+        passed=status == 0,
+        observed=_observed_version(slot_name, results_dir),
+        network_hint=net_hint if status != 0 else None,
+    )
+
+
+def _stream(argv: list[str], line_prefix: str) -> tuple[int, str | None]:
+    """Run *argv*, echoing every output line as it arrives; both slot shapes use this.
+
+    Returns the exit status and the first line that read as a host
+    network/DNS failure (``None`` when none did).
+    """
     net_hint: str | None = None
     with subprocess.Popen(  # nosec B603
         argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
@@ -170,11 +192,90 @@ def run_slot(
             if net_hint is None:
                 net_hint = _network_error_signature(line)
         status = proc.wait()
-    return SlotResult(
-        passed=status == 0,
-        observed=_observed_version(slot_name, results_dir),
-        network_hint=net_hint if status != 0 else None,
-    )
+    return status, net_hint
+
+
+# ── The booted shape (systemd as PID 1) ────────────────────────────
+
+# ``systemctl is-system-running`` exits 1 in this state: the boot finished
+# but some unit failed.  The units the tests actually depend on are started
+# and checked by name, so a degraded boot still counts as booted — a slot
+# image's unrelated failing unit must not cost the whole run.
+_DEGRADED_STATE = "degraded"
+
+# How long a booted slot may take to report its boot finished.  A microVM
+# systemd is up in seconds; minutes here means a unit hangs in the image, and
+# a hung probe would otherwise stall the whole matrix run.
+_BOOT_TIMEOUT_SECONDS = 300
+
+# Shutdown grace for a systemd slot.  ``--systemd`` sets the stop signal to
+# SIGRTMIN+3, which systemd takes as "power off now"; the container holds
+# nothing worth draining, so a few seconds is generosity, not need.
+_STOP_GRACE_SECONDS = "5"
+
+
+def _run_in_booted_slot(
+    config: MatrixConfig, slot_name: str, results_dir: Path, line_prefix: str
+) -> tuple[int, str | None]:
+    """Boot the slot's systemd, run the outer script inside it, then stop it.
+
+    The container command is the image's init, so the run must be detached:
+    ``podman run`` would otherwise never return.  Once systemd reports the
+    boot finished, the outer script goes in through ``podman exec`` and
+    streams exactly as the foreground shape does.  The stop rides a
+    ``finally`` — the run carries ``--rm``, so stopping is also removing.
+    """
+    name = _container_name(config, slot_name)
+    try:
+        probe = subprocess.run(  # nosec B603
+            _run_argv(config, slot_name, results_dir, detached=True),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            try:
+                probe = subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
+                    ["podman", "exec", name, "systemctl", "is-system-running", "--wait"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=_BOOT_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                probe = subprocess.CompletedProcess(
+                    [], 1, "", f"boot not finished after {_BOOT_TIMEOUT_SECONDS}s"
+                )
+        if not _booted(probe):
+            _report_failed_boot(name, probe, line_prefix)
+            return probe.returncode or 1, None
+        # No ``-t``: the exec is not interactive, and a pty would fold
+        # stderr into stdout ordering and re-wrap the streamed lines.
+        return _stream(
+            ["podman", "exec", "-i", name, "bash", _outer_in_container(slot_name)], line_prefix
+        )
+    finally:
+        subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
+            ["podman", "stop", "-t", _STOP_GRACE_SECONDS, name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+
+def _booted(probe: subprocess.CompletedProcess[str]) -> bool:
+    """Whether the boot probe says systemd came up."""
+    return probe.returncode == 0 or (probe.returncode == 1 and _DEGRADED_STATE in probe.stdout)
+
+
+def _report_failed_boot(
+    name: str, probe: subprocess.CompletedProcess[str], line_prefix: str
+) -> None:
+    """Say why the slot never reached a running system — silence reads as a test failure."""
+    # One line: a tagged parallel run tags only the first line of a write.
+    gist = sanitize_tty(" ".join(f"{probe.stdout} {probe.stderr}".split())) or "no output"
+    sys.stdout.write(f"{line_prefix}FATAL: {name} did not boot systemd: {gist}\n")
+    sys.stdout.flush()
 
 
 # ── Teardown ───────────────────────────────────────────────────────
@@ -302,20 +403,42 @@ def _write_scripts(config: MatrixConfig, slot_name: str, results_dir: Path, scop
     inner.write_text(inner_script(config, slot_name, scope), encoding="utf-8")
 
 
-def _run_argv(config: MatrixConfig, slot_name: str, results_dir: Path) -> list[str]:
+def _container_name(config: MatrixConfig, slot_name: str) -> str:
+    """The run container's name — ``podman exec`` and ``podman stop`` need it too."""
+    return f"{config.image_prefix}-{slot_name}"
+
+
+def _outer_in_container(slot_name: str) -> str:
+    """The slot's root-side script, as the container sees it on the results mount."""
+    return f"{RESULTS_MOUNT}/outer-{slot_name}.sh"
+
+
+def _run_argv(
+    config: MatrixConfig, slot_name: str, results_dir: Path, detached: bool = False
+) -> list[str]:
     """The ``podman run`` command line for one slot."""
     spec = SLOTS[slot_name]
+    boots_systemd = spec.boots_systemd(config.flavor, config.krun)
     argv = [
         "podman",
         "run",
+        *(["-d"] if detached else []),
         "--rm",
         "--replace",
+    ]
+    if boots_systemd:
+        # PID 1 is the image's systemd, which reaps orphans itself and needs
+        # podman's systemd mode (cgroup rw, tmpfs on /run, SIGRTMIN+3 as the
+        # stop signal) to boot; ``--init`` would wedge catatonit in front of it.
+        argv += ["--systemd=always"]
+    else:
         # An init as PID 1 reaps the orphans tests leave behind.  The outer
         # script execs into ``su``, which waits for its own child only, so a
         # test that kills a process tree would otherwise see zombies survive.
-        "--init",
+        argv += ["--init"]
+    argv += [
         "--name",
-        f"{config.image_prefix}-{slot_name}",
+        _container_name(config, slot_name),
         # The image already carries the ownership label, but the teardown
         # sweep must find leftover containers even when label inheritance
         # doesn't apply — so the run stamps it explicitly too.
@@ -365,9 +488,10 @@ def _run_argv(config: MatrixConfig, slot_name: str, results_dir: Path) -> list[s
         "-v",
         f"{results_dir}:{RESULTS_MOUNT}:rw,z",
         f"{config.image_prefix}:{slot_name}",
-        "bash",
-        f"{RESULTS_MOUNT}/outer-{slot_name}.sh",
     ]
+    # A booted slot runs its init and takes the outer script through
+    # ``podman exec`` once the boot has finished.
+    argv += [SYSTEMD_INIT] if boots_systemd else ["bash", _outer_in_container(slot_name)]
     return argv
 
 

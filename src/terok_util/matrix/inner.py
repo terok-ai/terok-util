@@ -33,6 +33,8 @@ from .catalog import (
     SLOT_ENV,
     SLOTS,
     SOURCE_MOUNT,
+    SYSTEMD_COMM,
+    USER_MANAGER_UNIT,
     UV_MANAGED_PYTHON_DIR,
     WORKSPACE_DIR,
     SlotKind,
@@ -44,8 +46,14 @@ TEST_UID = 1000
 
 
 def outer_script(config: MatrixConfig, slot_name: str) -> str:
-    """Root-side container entry: workspace prep, init-system proof, user drop."""
+    """Root-side container entry: workspace prep, init-system proof, user drop.
+
+    On a slot that boots systemd this script is what ``podman exec`` runs
+    inside the booted container, not the container command — the flow is
+    otherwise the same.
+    """
     spec = SLOTS[slot_name]
+    boots_systemd = spec.boots_systemd(config.flavor, config.krun)
     lines = ["#!/bin/bash", "set -e -o pipefail", ""]
     if config.krun:
         lines += _krun_dev_std_symlinks()
@@ -53,21 +61,19 @@ def outer_script(config: MatrixConfig, slot_name: str) -> str:
         if spec.runs_nested_podman(config.flavor):
             lines += _krun_relax_devices()
             lines += _krun_mount_mqueue()
-            lines += _krun_real_disk(spec.user)
+            lines += _krun_real_disk(spec.user, bind_runroot=not boots_systemd)
     lines += [
         f"cp -a {SOURCE_MOUNT} {WORKSPACE_DIR}",
         f"chown -R {spec.user}:{spec.user} {WORKSPACE_DIR}",
     ]
     if spec.kind is SlotKind.CONTAINER:
-        lines += _init_system_proof(slot_name)
+        lines += _init_system_proof(slot_name, boots_systemd)
     if spec.runs_nested_podman(config.flavor):
         lines += _resolv_conf_strip()
-    lines += [
-        "",
-        f"install -m 0755 {RESULTS_MOUNT}/inner-{slot_name}.sh /tmp/inner.sh",
-        *_user_drop(spec.user, spec.kind),
-        "",
-    ]
+    lines += ["", f"install -m 0755 {RESULTS_MOUNT}/inner-{slot_name}.sh /tmp/inner.sh"]
+    if boots_systemd:
+        lines += _start_user_manager(spec.user)
+    lines += [*_user_drop(spec.user, spec.kind), ""]
     return "\n".join(lines)
 
 
@@ -178,8 +184,8 @@ def _krun_mount_mqueue() -> list[str]:
     ]
 
 
-def _krun_real_disk(user: str) -> list[str]:
-    """Loop-mount one ext4 disk under krun for the two paths that need it.
+def _krun_real_disk(user: str, bind_runroot: bool) -> list[str]:
+    """Loop-mount one ext4 disk under krun for the paths that need it.
 
     krun's rootfs is virtiofs, which root-squashes the subuid ``mkdir``/
     ``chown`` that rootless podman does as it unpacks and runs images
@@ -198,6 +204,11 @@ def _krun_real_disk(user: str) -> list[str]:
       ≥5 skips that write when ``/etc/resolv.conf`` is volume-mounted, so only
       the 4.x slots tripped it).
 
+    *bind_runroot* turns the third one off: a slot that boots systemd gets
+    its ``/run/user/<uid>`` from ``user-runtime-dir@``, as a systemd-owned
+    tmpfs (guest-kernel, so nothing to squash) — and a bind mount over it
+    would hide the user manager's own sockets from the test user.
+
     The build **workspace** is deliberately *not* bound here: the build's
     read-only context overlay is driven by fuse-overlayfs, which works over
     plain virtiofs, so the repo copy stays on the rootfs.  The mount point is
@@ -213,8 +224,9 @@ def _krun_real_disk(user: str) -> list[str]:
     """
     disk, home = KRUN_DISK_MOUNT, f"/home/{user}"
     store = f"{home}/.local/share/containers"
-    return [
-        'echo "--- krun: loop-ext4 for the store + build tmp + runroot (virtiofs squashes subuid mkdir) ---"',
+    purposes = "the store + build tmp" + (" + runroot" if bind_runroot else "")
+    lines = [
+        f'echo "--- krun: loop-ext4 for {purposes} (virtiofs squashes subuid mkdir) ---"',
         f"truncate -s {KRUN_DISK_SIZE} {KRUN_DISK_IMG}",
         f"mkfs.ext4 -qF -O ^has_journal -E lazy_itable_init=1 {KRUN_DISK_IMG}",
         f"mkdir -p {disk}",
@@ -226,14 +238,17 @@ def _krun_real_disk(user: str) -> list[str]:
         # sibling like ~/.local/share/terok (shield state) can't be created.
         f"install -d -o {user} -g {user} {home}/.local {home}/.local/share {store}",
         f"mount --bind {disk}/store {store}",
+    ]
+    if bind_runroot:
         # Bind the rootless runroot ($XDG_RUNTIME_DIR/containers) to the ext4
         # too — its path (/run/user/<uid>) stays put so XDG + the 107-byte
         # AF_UNIX limit are unaffected, but the subuid runroot writes now land
         # on the guest-kernel-owned ext4 instead of the squashing virtiofs.
-        f"install -d -o {user} -g {user} -m 0700 {disk}/run",
-        f'mount --bind {disk}/run /run/user/"$(id -u {user})"',
-        "",
-    ]
+        lines += [
+            f"install -d -o {user} -g {user} -m 0700 {disk}/run",
+            f'mount --bind {disk}/run /run/user/"$(id -u {user})"',
+        ]
+    return [*lines, ""]
 
 
 def _krun_tmpdir_export() -> list[str]:
@@ -254,25 +269,57 @@ def _krun_tmpdir_export() -> list[str]:
     return [f"export TMPDIR={KRUN_DISK_MOUNT}", f"export UV_CACHE_DIR={KRUN_DISK_MOUNT}/uv-cache"]
 
 
-def _init_system_proof(slot_name: str) -> list[str]:
-    """Record PID1; hard-fail non-systemd slots if systemd sneaks back in."""
+def _init_system_proof(slot_name: str, boots_systemd: bool) -> list[str]:
+    """Record PID1; hard-fail a slot whose init system contradicts its contract."""
     on_systemd_present = ['    echo "systemd: present"']
     if SLOTS[slot_name].non_systemd:
         on_systemd_present += [
             f"    echo \"FATAL: '{slot_name}' is a non-systemd slot but systemd was detected\" >&2",
             "    exit 1",
         ]
-    return [
+    lines = [
         "",
         "# Non-systemd slots must run on a genuinely systemd-free host; fail",
         "# loudly if a future base image regresses that.  Other slots just",
         "# record their init system in the log.",
-        'echo "--- init system: PID1=$(cat /proc/1/comm 2>/dev/null || echo unknown) ---"',
+        "pid1=$(cat /proc/1/comm 2>/dev/null || echo unknown)",
+        'echo "--- init system: PID1=$pid1 ---"',
         "if command -v systemctl >/dev/null 2>&1 || [ -d /run/systemd/system ]; then",
         *on_systemd_present,
         "else",
         '    echo "systemd: absent - non-systemd host confirmed"',
         "fi",
+    ]
+    if boots_systemd:
+        # The inversion of the rule above: this slot is booted as its own
+        # microVM precisely so the tests meet a real systemd.  An init shim
+        # in front of it would leave them with a user manager that cannot
+        # start, so say so here rather than let the tests fail obscurely.
+        lines += [
+            f'if [ "$pid1" != "{SYSTEMD_COMM}" ]; then',
+            f"    echo \"FATAL: '{slot_name}' must boot systemd as PID 1, but PID1=$pid1\" >&2",
+            "    exit 1",
+            "fi",
+        ]
+    return lines
+
+
+def _start_user_manager(user: str) -> list[str]:
+    """Start the test user's ``systemd --user`` before the ``su`` hand-off.
+
+    ``su -`` opens a logind session — and with it a user manager — only where
+    the image's PAM stack calls ``pam_systemd``, which not every slot image
+    does.  Starting the unit by name makes the per-user manager and its
+    ``/run/user/<uid>`` (created by the unit's ``user-runtime-dir@``
+    dependency, which the inner script reads as ``XDG_RUNTIME_DIR``) a fact
+    of every booted slot instead of a per-distro accident.
+    """
+    unit = USER_MANAGER_UNIT.format(uid=f"$(id -u {user})")
+    return [
+        "",
+        f'echo "--- systemd: starting the user manager for {user} ---"',
+        f'systemctl start "{unit}" \\',
+        f'    || {{ echo "FATAL: user manager for {user} did not start" >&2; exit 1; }}',
     ]
 
 
