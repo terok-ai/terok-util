@@ -812,6 +812,24 @@ def test_booted_slot_is_one_attached_run_with_its_units_in_place(
     assert "[debian13] hello" in capsys.readouterr().out
 
 
+def test_booted_slot_lines_lose_the_libkrun_console_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The console reaches podman as ERROR log records; the slot log shows plain lines."""
+    config, results, _probe, popen = _booted_slot(tmp_path, monkeypatch)
+    popen.lines = [
+        "[2026-09-10T17:07:18.965615Z ERROR init_or_kernel] --- init system: PID1=systemd ---",
+        "[2026-09-10T17:07:19.000000Z ERROR init_or_kernel] [missing newline]partial",
+    ]
+
+    runner.run_slot(config, "debian13", results, line_prefix="[debian13] ")
+
+    out = capsys.readouterr().out
+    assert "[debian13] --- init system: PID1=systemd ---" in out
+    assert "[debian13] partial" in out
+    assert "init_or_kernel" not in out
+
+
 def test_booted_slot_takes_its_verdict_from_the_recorded_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

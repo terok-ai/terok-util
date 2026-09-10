@@ -182,8 +182,6 @@ def test_krun_outer_starts_the_user_manager_and_proves_systemd_is_pid1(tmp_path:
     krun = replace(config, krun=True)
 
     debian13 = outer_script(krun, "debian13", boots_systemd=True)
-    # Output leaves by the krun-stdout port before anything else runs.
-    assert debian13.index("= krun-stdout ]") < debian13.index("cp -a")
     assert 'systemctl start "user@$(id -u testrunner).service"' in debian13
     assert "FATAL: user manager for testrunner did not start" in debian13
     assert "must boot systemd as PID 1" in debian13
@@ -193,7 +191,6 @@ def test_krun_outer_starts_the_user_manager_and_proves_systemd_is_pid1(tmp_path:
     # Not where the runner boots no systemd: an image without one, the
     # systemd-free floor, a shared-kernel run.
     assert "systemctl start" not in outer_script(krun, "debian13")
-    assert "krun-stdout" not in outer_script(krun, "debian13")
     assert "must boot systemd as PID 1" not in outer_script(krun, "debian13")
     assert "systemctl start" not in outer_script(krun, "alpine")
     assert "systemctl start" not in outer_script(config, "debian13")
@@ -217,6 +214,8 @@ def test_boot_units_run_the_outer_script_and_hand_back_its_status() -> None:
     assert f"Requires=multi-user.target {SLOT_SERVICE}" in units[BOOT_TARGET]
     boot_deadline = units["multi-user.target.d/terok-matrix-boot.conf"]
     assert "JobTimeoutAction=reboot-force" in boot_deadline
+    # An image without a machine ID must not wait at systemd-firstboot's prompt.
+    assert "ConditionFirstBoot=no" in units["systemd-firstboot.service.d/terok-matrix.conf"]
 
 
 def test_inner_script_signals_kernel_isolation_only_under_krun(tmp_path: Path) -> None:

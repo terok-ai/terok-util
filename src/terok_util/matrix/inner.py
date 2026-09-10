@@ -60,8 +60,6 @@ def outer_script(config: MatrixConfig, slot_name: str, *, boots_systemd: bool = 
     """
     spec = SLOTS[slot_name]
     lines = ["#!/bin/bash", "set -e -o pipefail", ""]
-    if boots_systemd:
-        lines += _krun_stdout_redirect()
     if config.krun:
         lines += _krun_dev_std_symlinks()
         lines += _krun_clock_skew_guard()
@@ -118,13 +116,15 @@ def boot_units(slot_name: str) -> dict[str, str]:
     crun's krun handler implements no exec, so nothing reaches a booted
     microVM through ``podman exec``.  Its systemd starts ``terok-matrix.target``
     instead: the normal boot, then the outer script as a oneshot service.
-    The service starts on the console, and the outer script moves its
-    output to libkrun's ``krun-stdout`` port, so it streams as in the plain
-    shape.  It
+    The service writes to the console, which libkrun hands to podman's
+    stdout as log records; the runner strips their prefix.  Nothing reopens
+    libkrun's ``krun-stdout`` port: systemd closed it on taking over PID 1,
+    and libkrun panics when a port opens a second time.  The service
     records its exit status on the results mount, because podman's own
     status is the VM's, and then ends the VM with a reboot, the way
     libkrun's own init ends it.  A boot that does not reach
-    ``multi-user.target`` in time ends the VM the same way.
+    ``multi-user.target`` in time ends the VM the same way, and
+    ``systemd-firstboot`` never waits for answers on a console nobody reads.
     """
     service = [
         "[Unit]",
@@ -156,28 +156,12 @@ def boot_units(slot_name: str) -> dict[str, str]:
         SLOT_SERVICE: "\n".join(service) + "\n",
         BOOT_TARGET: "\n".join(target) + "\n",
         "multi-user.target.d/terok-matrix-boot.conf": "\n".join(boot_deadline) + "\n",
+        # An image without a machine ID boots for the first time.
+        "systemd-firstboot.service.d/terok-matrix.conf": "[Unit]\nConditionFirstBoot=no\n",
     }
 
 
 # ── Outer building blocks ──────────────────────────────────────────
-
-
-def _krun_stdout_redirect() -> list[str]:
-    """Send a booted slot's output down libkrun's ``krun-stdout`` port.
-
-    The slot service starts on the console, which libkrun hands to a
-    non-terminal podman as ERROR-level log lines, each with a timestamp.  The
-    ``krun-stdout`` port reaches podman's stdout as plain output, the same
-    stream the plain shape writes to.  Without the port, the console stays.
-    """
-    return [
-        "for port in /sys/class/virtio-ports/*; do",
-        '    if [ "$(cat "$port/name" 2>/dev/null)" = krun-stdout ]; then',
-        '        exec >"/dev/${port##*/}" 2>&1',
-        "    fi",
-        "done",
-        "",
-    ]
 
 
 def _krun_clock_skew_guard() -> list[str]:

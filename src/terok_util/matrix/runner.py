@@ -16,6 +16,7 @@ and the test run are long and live); all narration around it belongs to
 
 from __future__ import annotations
 
+import re
 import subprocess  # nosec B404 - fixed-argv podman shellouts
 import sys
 from dataclasses import dataclass
@@ -178,18 +179,22 @@ def run_slot(
     )
 
 
-def _stream(argv: list[str], line_prefix: str) -> tuple[int, str | None]:
+def _stream(
+    argv: list[str], line_prefix: str, strip: re.Pattern[str] | None = None
+) -> tuple[int, str | None]:
     """Run *argv*, echoing every output line as it arrives; both slot shapes use this.
 
-    Returns the exit status and the first line that read as a host
-    network/DNS failure (``None`` when none did).
+    *strip* removes a transport prefix from each line first.  Returns the
+    exit status and the first line that read as a host network/DNS failure
+    (``None`` when none did).
     """
     net_hint: str | None = None
     with subprocess.Popen(  # nosec B603
         argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
     ) as proc:
         stdout = cast(IO[str], proc.stdout)  # guaranteed non-None by stdout=PIPE
-        for line in stdout:
+        for raw in stdout:
+            line = strip.sub("", raw, count=1) if strip else raw
             sys.stdout.write(f"{line_prefix}{line}")
             sys.stdout.flush()
             if net_hint is None:
@@ -199,6 +204,13 @@ def _stream(argv: list[str], line_prefix: str) -> tuple[int, str | None]:
 
 
 # ── The booted shape (systemd as PID 1) ────────────────────────────
+
+# What libkrun puts in front of each console line when podman's stdout is
+# not a terminal: the console leaves as ERROR-level log records.  A booted
+# slot writes to the console, so its lines lose this prefix on the way out.
+_KRUN_CONSOLE_PREFIX = re.compile(
+    r"^\[\d{4}-\d{2}-\d{2}T[\d:.]+Z ERROR init_or_kernel\] (?:\[missing newline\])?"
+)
 
 
 def _boots_systemd(config: MatrixConfig, slot_name: str) -> bool:
@@ -237,14 +249,16 @@ def _run_in_booted_slot(
     """Boot the slot's systemd, which runs the outer script and then ends the VM.
 
     One attached ``podman run``, streamed as in the plain shape: the script
-    goes in as a service and its output comes back on podman's stdout (see
+    goes in as a service and its output comes back on the console (see
     [`boot_units`][terok_util.matrix.inner.boot_units]).  The script's exit
     status comes back as a file on the results mount, because podman's own
     status is the VM's.  Without a numeric status the slot fails with one
     line that says why.
     """
     status, net_hint = _stream(
-        _run_argv(config, slot_name, results_dir, boots_systemd=True), line_prefix
+        _run_argv(config, slot_name, results_dir, boots_systemd=True),
+        line_prefix,
+        strip=_KRUN_CONSOLE_PREFIX,
     )
     try:
         recorded = (results_dir / f"{slot_name}.exit").read_text(encoding="utf-8").strip()
