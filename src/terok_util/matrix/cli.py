@@ -29,12 +29,14 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
 from .catalog import SLOTS, SlotKind
 from .config import MatrixConfig, MatrixConfigError, load_config
+from .jobserver import Jobserver
 from .runner import (
     SlotResult,
     build_image,
@@ -200,8 +202,11 @@ def _walk_matrix(
             continue
         runnable.append(name)
 
-    if args.jobs > 1 and len(runnable) > 1:
-        results = _run_slots_tagged(config, runnable, args, results_dir)
+    jobserver = Jobserver.from_environ() if len(runnable) > 1 else None
+    # Under a make jobserver its tokens set the pace; an explicit --jobs still caps it.
+    jobs = args.jobs or (len(runnable) if jobserver else 1)
+    if jobs > 1 and len(runnable) > 1:
+        results = _run_slots_tagged(config, runnable, args, results_dir, jobs, jobserver)
     else:
         results = {}
         for name in runnable:
@@ -235,7 +240,12 @@ def _build_images(
 
 
 def _run_slots_tagged(
-    config: MatrixConfig, names: list[str], args: argparse.Namespace, results_dir: Path
+    config: MatrixConfig,
+    names: list[str],
+    args: argparse.Namespace,
+    results_dir: Path,
+    jobs: int,
+    jobserver: Jobserver | None,
 ) -> dict[str, SlotResult]:
     """Run slots concurrently with live, per-line-tagged output.
 
@@ -244,26 +254,25 @@ def _run_slots_tagged(
     colored ``[slot]`` prefix on each line (the docker-compose model),
     emitted as a single write so concurrent slots interleave only
     between lines.  Verdicts print as slots finish; the summary at the
-    end is the same one a serial run prints.
+    end is the same one a serial run prints.  Up to *jobs* slots run at
+    once; under a make *jobserver* each also holds one of its job slots
+    (see [`Jobserver`][terok_util.matrix.jobserver.Jobserver]).
     """
     prefixes = _slot_prefixes(names)
     results: dict[str, SlotResult] = {}
     # The shared results dir is safe: per-slot artifact names never
     # collide (outer-<slot>.sh, <slot>.podman-version, ...).
-    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+
+    def run_one(name: str) -> SlotResult:
+        """Run one slot, holding a job slot while a jobserver sets the pace."""
+        with jobserver.slot() if jobserver else nullcontext():
+            return run_slot(config, name, results_dir, scope=args.scope, line_prefix=prefixes[name])
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = {}
         for name in names:
             print(f"{prefixes[name]}{CYAN}==> Testing {BOLD}{name}{RESET}")
-            futures[
-                pool.submit(
-                    run_slot,
-                    config,
-                    name,
-                    results_dir,
-                    scope=args.scope,
-                    line_prefix=prefixes[name],
-                )
-            ] = name
+            futures[pool.submit(run_one, name)] = name
         for future in as_completed(futures):
             name = futures[future]
             results[name] = future.result()
@@ -535,8 +544,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "-j",
         "--jobs",
         type=int,
-        default=1,
-        help="run up to N slots concurrently, live output tagged [slot] per line",
+        help="run up to N slots concurrently, live output tagged [slot] per line"
+        " (default: 1, or as many as a make jobserver in MAKEFLAGS allows)",
     )
     parser.add_argument(
         "--keep-dangling", action="store_true", help="skip the teardown prune of dangling layers"
