@@ -57,6 +57,26 @@ def test_fifo_jobserver_hands_out_the_implicit_slot_then_its_tokens(
     assert sorted(_tokens(fd)) == sorted(b"ab")
 
 
+def test_a_waiting_slot_takes_the_implicit_slot_when_it_frees(server: tuple[Path, int]) -> None:
+    """All of a run's slots may wait for tokens at once; one of them must take the implicit slot back."""
+    fifo, fd = server
+    client = Jobserver.from_environ({"MAKEFLAGS": f"--jobserver-auth=fifo:{fifo}"})
+    assert client is not None
+    entered = threading.Event()
+
+    def waiting_slot() -> None:
+        with client.slot():
+            entered.set()
+
+    with client.slot():
+        waiter = threading.Thread(target=waiting_slot, daemon=True)
+        waiter.start()
+        assert not entered.wait(0.3), "no token and no free implicit slot: it must wait"
+    assert entered.wait(3), "the freed implicit slot went unused"
+    waiter.join(3)
+    assert _tokens(fd) == b""
+
+
 def test_pipe_jobserver_uses_the_inherited_descriptors() -> None:
     """make 4.3 passes a plain pipe as R,W; the last auth option counts."""
     read_fd, write_fd = os.pipe()
