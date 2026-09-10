@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import platform
+import signal
 import sys
 import tempfile
 import time
@@ -112,11 +113,14 @@ def main(argv: list[str] | None = None) -> int:
         # with the sticky bit, so other host accounts cannot replace the
         # generated scripts podman is about to execute.
         results_dir.chmod(0o1777)
+        previous = signal.signal(signal.SIGTERM, _interrupt_on_sigterm)
         try:
             return _run_matrix(config, targets, args, results_dir)
         except OSError as error:
             print(f"{RED}Error: {error}{RESET}", file=sys.stderr)
             return 2
+        finally:
+            signal.signal(signal.SIGTERM, previous)
 
 
 # ── The matrix walk ────────────────────────────────────────────────
@@ -149,6 +153,11 @@ def _run_matrix(
         # per-slot summaries above -- one clock format per log.
         elapsed = timedelta(seconds=round(_monotonic_now() - started))
         print(f"\n{BOLD}Matrix wall time: {elapsed}{RESET}")
+
+
+def _interrupt_on_sigterm(_signum: int, _frame: object) -> None:
+    """Unwind a SIGTERM like a Ctrl-C: job slots go back to the jobserver, and teardown runs."""
+    raise KeyboardInterrupt
 
 
 def _monotonic_now() -> float:
@@ -269,14 +278,23 @@ def _run_slots_tagged(
             return run_slot(config, name, results_dir, scope=args.scope, line_prefix=prefixes[name])
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        futures = {}
-        for name in names:
-            print(f"{prefixes[name]}{CYAN}==> Testing {BOLD}{name}{RESET}")
-            futures[pool.submit(run_one, name)] = name
-        for future in as_completed(futures):
-            name = futures[future]
-            results[name] = future.result()
-            _print_verdict(config, name, results[name])
+        try:
+            futures = {}
+            for name in names:
+                print(f"{prefixes[name]}{CYAN}==> Testing {BOLD}{name}{RESET}")
+                futures[pool.submit(run_one, name)] = name
+            for future in as_completed(futures):
+                name = futures[future]
+                results[name] = future.result()
+                _print_verdict(config, name, results[name])
+        except BaseException:
+            # Interrupted: queued slots never start, and slots waiting for a
+            # token stop waiting.  Running slots end with their podman and give
+            # their tokens back on the way out.
+            if jobserver:
+                jobserver.close()
+            pool.shutdown(cancel_futures=True)
+            raise
     return results
 
 

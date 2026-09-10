@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import threading
 import time
 from collections.abc import Iterator
@@ -50,6 +51,7 @@ def test_fifo_jobserver_hands_out_the_implicit_slot_then_its_tokens(
     os.write(fd, b"ab")
     client = Jobserver.from_environ({"MAKEFLAGS": f"-j3 --jobserver-auth=fifo:{fifo}"})
     assert client is not None
+    assert client.inherited_fds == ()  # children find a named pipe by its path
 
     with client.slot(), client.slot(), client.slot():
         assert _tokens(fd) == b""
@@ -72,7 +74,7 @@ def test_a_waiting_slot_takes_the_implicit_slot_when_it_frees(server: tuple[Path
         waiter = threading.Thread(target=waiting_slot, daemon=True)
         waiter.start()
         assert not entered.wait(0.3), "no token and no free implicit slot: it must wait"
-    assert entered.wait(3), "the freed implicit slot went unused"
+    assert entered.wait(0.5), "the freed implicit slot did not wake its waiter"
     waiter.join(3)
     assert _tokens(fd) == b""
 
@@ -85,6 +87,7 @@ def test_pipe_jobserver_uses_the_inherited_descriptors() -> None:
         makeflags = f"--jobserver-auth=-2,-2 -j2 --jobserver-auth={read_fd},{write_fd}"
         client = Jobserver.from_environ({"MAKEFLAGS": makeflags})
         assert client is not None
+        assert client.inherited_fds == (read_fd, write_fd)
         with client.slot(), client.slot():
             pass
         assert os.read(read_fd, 1) == b"+"
@@ -144,3 +147,76 @@ def test_parallel_walk_holds_to_the_jobserver(
     assert cli.main(["--config", str(tmp_path / "tests" / "containers" / "matrix.yml")]) == 0
     assert peak == 2
     assert _tokens(fd) == b"+"
+
+
+def test_a_closed_jobserver_sends_waiting_slots_away(server: tuple[Path, int]) -> None:
+    """After close, a slot still waiting for a token gives up, and no new slot starts."""
+    fifo, _fd = server
+    client = Jobserver.from_environ({"MAKEFLAGS": f"--jobserver-auth=fifo:{fifo}"})
+    assert client is not None
+    gave_up = threading.Event()
+
+    def waiting_slot() -> None:
+        try:
+            with client.slot():
+                pass
+        except InterruptedError:
+            gave_up.set()
+
+    with client.slot():
+        threading.Thread(target=waiting_slot, daemon=True).start()
+        time.sleep(0.2)
+        client.close()
+        assert gave_up.wait(0.5), "close did not wake the waiting slot"
+    with pytest.raises(InterruptedError), client.slot():
+        pass
+
+
+def test_a_launcher_takes_tokens_only(server: tuple[Path, int]) -> None:
+    """implicit=False leaves the implicit slot alone: a launcher's own slot stays its own."""
+    fifo, fd = server
+    os.write(fd, b"+")
+    client = Jobserver.from_environ({"MAKEFLAGS": f"--jobserver-auth=fifo:{fifo}"})
+    assert client is not None
+
+    with client.slot(implicit=False):
+        assert _tokens(fd) == b""
+        with client.slot():
+            pass
+
+    assert _tokens(fd) == b"+"
+
+
+def test_a_sigterm_mid_walk_starts_no_more_slots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, server: tuple[Path, int]
+) -> None:
+    """A killed walk sends waiting slots away, lets the running one end, and restores SIGTERM."""
+    write_config(tmp_path)
+    fifo, _fd = server
+    monkeypatch.setenv("MAKEFLAGS", f"--jobserver-auth=fifo:{fifo}")
+    monkeypatch.setattr("terok_util.matrix.jobserver._RECHECK_SECONDS", 0.05)
+    started: list[str] = []
+
+    def fake_run_slot(config, name, results_dir, scope="all", line_prefix=None):
+        started.append(name)
+        time.sleep(0.5)
+        return runner.SlotResult(passed=True, observed="5.0.0")
+
+    monkeypatch.setattr(cli, "run_slot", fake_run_slot)
+    monkeypatch.setattr(cli, "_build_images", lambda *a, **k: set())
+    monkeypatch.setattr(cli, "prune_dangling", lambda config: 0)
+    monkeypatch.setattr(cli, "sweep_containers", lambda config: 0)
+    monkeypatch.setattr(cli, "external_storage_leftovers", lambda: [])
+    monkeypatch.setattr(cli, "_skip_reason", lambda config, name: "")
+    previous = signal.getsignal(signal.SIGTERM)
+    killer = threading.Timer(0.2, os.kill, (os.getpid(), signal.SIGTERM))
+
+    killer.start()
+    try:
+        rc = cli.main(["--config", str(tmp_path / "tests" / "containers" / "matrix.yml")])
+    finally:
+        killer.cancel()
+
+    assert rc == cli.EXIT_INTERRUPTED
+    assert len(started) == 1
+    assert signal.getsignal(signal.SIGTERM) is previous
