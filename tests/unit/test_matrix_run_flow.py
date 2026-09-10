@@ -805,7 +805,7 @@ def test_booted_slot_is_one_attached_run_with_its_units_in_place(
     assert probed[-3:] == [f"{config.image_prefix}:debian13", "-x", SYSTEMD_INIT]
     (streamed,) = popen.calls
     assert "KRUN_INIT_PID1=1" in streamed
-    assert streamed[-3] == SYSTEMD_INIT
+    assert SYSTEMD_INIT in streamed
     assert (results / "systemd-debian13" / SLOT_SERVICE).is_file()
     assert "must boot systemd as PID 1" in (results / "outer-debian13.sh").read_text()
     # the same streaming loop as the plain shape: tagged, line by line

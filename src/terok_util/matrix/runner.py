@@ -237,7 +237,7 @@ def _run_in_booted_slot(
     """Boot the slot's systemd, which runs the outer script and then ends the VM.
 
     One attached ``podman run``, streamed as in the plain shape: the script
-    goes in as a service and its output comes back on the console (see
+    goes in as a service and its output comes back on podman's stdout (see
     [`boot_units`][terok_util.matrix.inner.boot_units]).  The script's exit
     status comes back as a file on the results mount, because podman's own
     status is the VM's.  Without a numeric status the slot fails with one
@@ -418,12 +418,14 @@ def _run_argv(
     spec = SLOTS[slot_name]
     argv = ["podman", "run", "--rm", "--replace"]
     if boots_systemd:
-        # PID 1 is the image's systemd, which reaps orphans itself and needs
-        # podman's systemd mode (cgroup rw, tmpfs on /run, SIGRTMIN+3 as the
-        # stop signal) to boot; ``--init`` would wedge catatonit in front of it.
-        # libkrun's init stays PID 1 and forks its command unless
-        # KRUN_INIT_PID1 tells it to exec the command instead.
-        argv += ["--systemd=always", "-e", "KRUN_INIT_PID1=1"]
+        # PID 1 is the image's systemd, which reaps orphans itself; ``--init``
+        # would wedge catatonit in front of it.  libkrun's init stays PID 1 and
+        # forks its command unless KRUN_INIT_PID1 tells it to exec it instead.
+        # podman's systemd mode stays off, although the command is systemd: its
+        # host-side tmpfs on /run reaches the guest as a virtiofs submount, so
+        # the guest's systemd finds /run mounted and skips its own tmpfs, and on
+        # the disk file system it gets instead the user manager cannot start.
+        argv += ["--systemd=false", "-e", "KRUN_INIT_PID1=1"]
     else:
         # An init as PID 1 reaps the orphans tests leave behind.  The outer
         # script execs into ``su``, which waits for its own child only, so a
@@ -485,9 +487,9 @@ def _run_argv(
         argv += ["-v", f"{_units_dir(results_dir, slot_name)}:{SYSTEMD_CONTROL_DIR}:ro,z"]
     argv.append(f"{config.image_prefix}:{slot_name}")
     # A booted slot's systemd starts the target that runs the outer script
-    # (see boot_units); without the status lines the log stays the slot's.
+    # (see boot_units); without status lines and info logs the log stays the slot's.
     argv += (
-        [SYSTEMD_INIT, f"--unit={BOOT_TARGET}", "--show-status=no"]
+        [SYSTEMD_INIT, f"--unit={BOOT_TARGET}", "--show-status=no", "--log-level=warning"]
         if boots_systemd
         else ["bash", _outer_in_container(slot_name)]
     )

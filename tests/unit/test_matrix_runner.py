@@ -144,13 +144,19 @@ def test_run_argv_boots_systemd_as_pid1_when_the_runner_says_so(tmp_path: Path) 
     krun = replace(load_fixture(tmp_path), krun=True)
 
     booted = _run_argv(krun, "debian13", results, boots_systemd=True)
-    assert "--systemd=always" in booted
+    # podman's systemd mode would mount a host tmpfs over the guest's /run.
+    assert "--systemd=false" in booted
     # catatonit in front of systemd would leave the tests without a user manager.
     assert "--init" not in booted
     # libkrun's init execs the command instead of forking it, so systemd is PID 1.
     assert booted[booted.index("KRUN_INIT_PID1=1") - 1] == "-e"
     assert f"{results}/systemd-debian13:{SYSTEMD_CONTROL_DIR}:ro,z" in booted
-    assert booted[-3:] == [SYSTEMD_INIT, f"--unit={BOOT_TARGET}", "--show-status=no"]
+    assert booted[-4:] == [
+        SYSTEMD_INIT,
+        f"--unit={BOOT_TARGET}",
+        "--show-status=no",
+        "--log-level=warning",
+    ]
     # One attached run: nothing detaches, and nothing goes in through exec later.
     assert "-d" not in booted
     # Everything else about the krun run is unchanged.
@@ -176,6 +182,8 @@ def test_krun_outer_starts_the_user_manager_and_proves_systemd_is_pid1(tmp_path:
     krun = replace(config, krun=True)
 
     debian13 = outer_script(krun, "debian13", boots_systemd=True)
+    # Output leaves by the krun-stdout port before anything else runs.
+    assert debian13.index("= krun-stdout ]") < debian13.index("cp -a")
     assert 'systemctl start "user@$(id -u testrunner).service"' in debian13
     assert "FATAL: user manager for testrunner did not start" in debian13
     assert "must boot systemd as PID 1" in debian13
@@ -185,6 +193,7 @@ def test_krun_outer_starts_the_user_manager_and_proves_systemd_is_pid1(tmp_path:
     # Not where the runner boots no systemd: an image without one, the
     # systemd-free floor, a shared-kernel run.
     assert "systemctl start" not in outer_script(krun, "debian13")
+    assert "krun-stdout" not in outer_script(krun, "debian13")
     assert "must boot systemd as PID 1" not in outer_script(krun, "debian13")
     assert "systemctl start" not in outer_script(krun, "alpine")
     assert "systemctl start" not in outer_script(config, "debian13")

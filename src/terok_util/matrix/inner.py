@@ -60,6 +60,8 @@ def outer_script(config: MatrixConfig, slot_name: str, *, boots_systemd: bool = 
     """
     spec = SLOTS[slot_name]
     lines = ["#!/bin/bash", "set -e -o pipefail", ""]
+    if boots_systemd:
+        lines += _krun_stdout_redirect()
     if config.krun:
         lines += _krun_dev_std_symlinks()
         lines += _krun_clock_skew_guard()
@@ -116,8 +118,9 @@ def boot_units(slot_name: str) -> dict[str, str]:
     crun's krun handler implements no exec, so nothing reaches a booted
     microVM through ``podman exec``.  Its systemd starts ``terok-matrix.target``
     instead: the normal boot, then the outer script as a oneshot service.
-    The service writes to the console, which libkrun hands to the
-    container's stdout, so the output streams as in the plain shape.  It
+    The service starts on the console, and the outer script moves its
+    output to libkrun's ``krun-stdout`` port, so it streams as in the plain
+    shape.  It
     records its exit status on the results mount, because podman's own
     status is the VM's, and then ends the VM with a reboot, the way
     libkrun's own init ends it.  A boot that does not reach
@@ -157,6 +160,24 @@ def boot_units(slot_name: str) -> dict[str, str]:
 
 
 # ── Outer building blocks ──────────────────────────────────────────
+
+
+def _krun_stdout_redirect() -> list[str]:
+    """Send a booted slot's output down libkrun's ``krun-stdout`` port.
+
+    The slot service starts on the console, which libkrun hands to a
+    non-terminal podman as ERROR-level log lines, each with a timestamp.  The
+    ``krun-stdout`` port reaches podman's stdout as plain output, the same
+    stream the plain shape writes to.  Without the port, the console stays.
+    """
+    return [
+        "for port in /sys/class/virtio-ports/*; do",
+        '    if [ "$(cat "$port/name" 2>/dev/null)" = krun-stdout ]; then',
+        '        exec >"/dev/${port##*/}" 2>&1',
+        "    fi",
+        "done",
+        "",
+    ]
 
 
 def _krun_clock_skew_guard() -> list[str]:
