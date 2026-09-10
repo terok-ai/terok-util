@@ -84,7 +84,7 @@ default-groups = ["dev", "test"]
 
 [tool.hatch.version]
 source = "vcs"
-fallback-version = "0.3.1a8"
+fallback-version = "0.3.1a9"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/terok_util"]
