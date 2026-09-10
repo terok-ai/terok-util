@@ -14,6 +14,9 @@ its three levels of quote-escaping is gone:
   contract, bootstrap a Python 3.12 venv plus uv, sync the repo's
   locked dependency groups, and walk the configured phases.
 
+A slot that boots systemd under krun also gets the units its systemd runs
+the outer script through ([`boot_units`][terok_util.matrix.inner.boot_units]).
+
 Command phases abort the slot on failure (``set -e``); pytest phases
 record the first failing exit code and keep going, so a single run
 surfaces every failing suite.
@@ -22,6 +25,7 @@ surfaces every failing suite.
 from __future__ import annotations
 
 from .catalog import (
+    BOOT_TARGET,
     EXPECT_ENV,
     KERNEL_ISOLATED_ENV,
     KRUN_DISK_IMG,
@@ -31,6 +35,7 @@ from .catalog import (
     PYTHON_VERSION,
     RESULTS_MOUNT,
     SLOT_ENV,
+    SLOT_SERVICE,
     SLOTS,
     SOURCE_MOUNT,
     SYSTEMD_COMM,
@@ -45,15 +50,15 @@ from .config import MatrixConfig
 TEST_UID = 1000
 
 
-def outer_script(config: MatrixConfig, slot_name: str) -> str:
+def outer_script(config: MatrixConfig, slot_name: str, *, boots_systemd: bool = False) -> str:
     """Root-side container entry: workspace prep, init-system proof, user drop.
 
-    On a slot that boots systemd this script is what ``podman exec`` runs
-    inside the booted container, not the container command — the flow is
-    otherwise the same.
+    *boots_systemd* is the runner's call: the slot may boot systemd, and its
+    image ships it.  There this script is the slot service's ``ExecStart``
+    (see [`boot_units`][terok_util.matrix.inner.boot_units]), not the
+    container command; the flow is otherwise the same.
     """
     spec = SLOTS[slot_name]
-    boots_systemd = spec.boots_systemd(config.flavor, config.krun)
     lines = ["#!/bin/bash", "set -e -o pipefail", ""]
     if config.krun:
         lines += _krun_dev_std_symlinks()
@@ -97,6 +102,58 @@ def inner_script(config: MatrixConfig, slot_name: str, scope: str = "all") -> st
     lines += _uv_sync(config.slot_groups(slot_name))
     lines += _phase_walk(config, slot_name, scope)
     return "\n".join(lines) + "\n"
+
+
+#: How long a booted slot may take to reach ``multi-user.target``.  A microVM
+#: systemd is up in seconds; minutes mean a unit hangs in the image, and the
+#: boot then ends the VM instead of stalling the whole matrix run.
+BOOT_TIMEOUT_SECONDS = 300
+
+
+def boot_units(slot_name: str) -> dict[str, str]:
+    """The units a booted slot runs through, keyed by path under the control dir.
+
+    crun's krun handler implements no exec, so nothing reaches a booted
+    microVM through ``podman exec``.  Its systemd starts ``terok-matrix.target``
+    instead: the normal boot, then the outer script as a oneshot service.
+    The service writes to the console, which libkrun hands to the
+    container's stdout, so the output streams as in the plain shape.  It
+    records its exit status on the results mount, because podman's own
+    status is the VM's, and then ends the VM with a reboot, the way
+    libkrun's own init ends it.  A boot that does not reach
+    ``multi-user.target`` in time ends the VM the same way.
+    """
+    service = [
+        "[Unit]",
+        f"Description=terok matrix: the {slot_name} slot's outer script",
+        "After=multi-user.target",
+        "SuccessAction=reboot-force",
+        "FailureAction=reboot-force",
+        "",
+        "[Service]",
+        "Type=oneshot",
+        f"ExecStart=/bin/bash {RESULTS_MOUNT}/outer-{slot_name}.sh",
+        f"ExecStopPost=/bin/sh -c 'echo \"$$EXIT_STATUS\" > {RESULTS_MOUNT}/{slot_name}.exit'",
+        "StandardOutput=tty",
+        "TTYPath=/dev/console",
+    ]
+    target = [
+        "[Unit]",
+        f"Description=terok matrix: the {slot_name} slot, booted",
+        f"Requires=multi-user.target {SLOT_SERVICE}",
+        "After=multi-user.target",
+        "AllowIsolate=yes",
+    ]
+    boot_deadline = [
+        "[Unit]",
+        f"JobTimeoutSec={BOOT_TIMEOUT_SECONDS}",
+        "JobTimeoutAction=reboot-force",
+    ]
+    return {
+        SLOT_SERVICE: "\n".join(service) + "\n",
+        BOOT_TARGET: "\n".join(target) + "\n",
+        "multi-user.target.d/terok-matrix-boot.conf": "\n".join(boot_deadline) + "\n",
+    }
 
 
 # ── Outer building blocks ──────────────────────────────────────────
