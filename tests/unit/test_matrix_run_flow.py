@@ -12,6 +12,7 @@ container host.
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -21,7 +22,7 @@ from typing import Any
 import pytest
 
 from terok_util.matrix import cli, runner
-from terok_util.matrix.catalog import SLOT_SERVICE, SYSTEMD_INIT
+from terok_util.matrix.catalog import SLOT_SERVICE, SYSTEM_BUS_SOCKET_UNIT, SYSTEMD_INIT
 from unit.matrix_fixtures import load_fixture, write_config
 
 
@@ -802,11 +803,22 @@ def test_booted_slot_is_one_attached_run_with_its_units_in_place(
     assert result.observed == "5.4.2"
     (probed,) = probe.calls
     assert probed[:4] == ["podman", "run", "--rm", "--network=none"]
-    assert probed[-3:] == [f"{config.image_prefix}:debian13", "-x", SYSTEMD_INIT]
+    # systemd, and the system bus its user manager cannot start without
+    assert probed[-6:] == [
+        f"{config.image_prefix}:debian13",
+        "-x",
+        SYSTEMD_INIT,
+        "-a",
+        "-e",
+        SYSTEM_BUS_SOCKET_UNIT,
+    ]
     (streamed,) = popen.calls
     assert "KRUN_INIT_PID1=1" in streamed
     assert SYSTEMD_INIT in streamed
     assert (results / "systemd-debian13" / SLOT_SERVICE).is_file()
+    # nobody answers the console: no first-boot prompt, no login
+    for masked in ("systemd-firstboot.service", "console-getty.service"):
+        assert (results / "systemd-debian13" / masked).readlink() == Path(os.devnull)
     assert "must boot systemd as PID 1" in (results / "outer-debian13.sh").read_text()
     # the same streaming loop as the plain shape: tagged, line by line
     assert "[debian13] hello" in capsys.readouterr().out

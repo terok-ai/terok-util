@@ -90,6 +90,12 @@ SYSTEMD_COMM = "systemd"
 #: reachable ``systemd --user`` on images whose PAM stack lacks ``pam_systemd``.
 USER_MANAGER_UNIT = "user@{uid}.service"
 
+#: The system bus a booted slot's image must ship with its systemd.
+#: ``user-runtime-dir@`` connects to it before it creates ``/run/user/<uid>``
+#: and exits when it cannot, so without a bus no user manager starts; Debian
+#: and Ubuntu only recommend one.
+SYSTEM_BUS_SOCKET_UNIT = "/usr/lib/systemd/system/dbus.socket"
+
 #: Where a booted slot's units are mounted: systemd's control directory, the
 #: first unit path it reads, empty in every image and outside ``/run``, which
 #: the booted systemd covers with a fresh tmpfs.
@@ -168,7 +174,8 @@ class SlotSpec:
         manager.  Under a shared kernel the slot stays a plain ``--init``
         container, and the systemd-free floor slots stay systemd-free
         everywhere.  The runner still checks the built image: a slot boots
-        only the systemd its image already has, and the matrix installs none.
+        only a systemd and system bus its image already has, and the matrix
+        installs neither.
         """
         return krun and self.runs_nested_podman(flavor) and not self.non_systemd
 

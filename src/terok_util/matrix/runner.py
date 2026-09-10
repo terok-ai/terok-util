@@ -16,6 +16,7 @@ and the test run are long and live); all narration around it belongs to
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess  # nosec B404 - fixed-argv podman shellouts
 import sys
@@ -36,6 +37,7 @@ from .catalog import (
     RESULTS_MOUNT,
     SLOTS,
     SOURCE_MOUNT,
+    SYSTEM_BUS_SOCKET_UNIT,
     SYSTEMD_CONTROL_DIR,
     SYSTEMD_INIT,
     UV_IMAGE_TAG,
@@ -43,7 +45,7 @@ from .catalog import (
     SlotKind,
 )
 from .config import MatrixConfig
-from .inner import boot_units, inner_script, outer_script
+from .inner import MASKED_UNITS, boot_units, inner_script, outer_script
 
 
 @dataclass(frozen=True)
@@ -214,10 +216,12 @@ _KRUN_CONSOLE_PREFIX = re.compile(
 
 
 def _boots_systemd(config: MatrixConfig, slot_name: str) -> bool:
-    """Whether this run boots the slot's systemd: the slot may, and its image has one.
+    """Whether this run boots the slot's systemd: the slot may, and its image can.
 
-    A slot boots only the systemd its image already ships (debian12's podman
-    image has none), and the matrix installs none.  A throwaway probe
+    A slot boots only a systemd its image already ships, together with the
+    system bus its user manager needs: debian12's podman image has no
+    systemd, and Debian and Ubuntu install systemd without a bus unless
+    asked.  The matrix installs neither.  A throwaway probe
     container on the default runtime, with no microVM and no network, checks
     the built image; the label lets the teardown sweep find a leftover.
     """
@@ -236,6 +240,9 @@ def _boots_systemd(config: MatrixConfig, slot_name: str) -> bool:
             f"{config.image_prefix}:{slot_name}",
             "-x",
             SYSTEMD_INIT,
+            "-a",
+            "-e",
+            SYSTEM_BUS_SOCKET_UNIT,
         ],
         check=False,
         capture_output=True,
@@ -404,10 +411,13 @@ def _write_scripts(
     inner = results_dir / f"inner-{slot_name}.sh"
     inner.write_text(inner_script(config, slot_name, scope), encoding="utf-8")
     if boots_systemd:
+        units = _units_dir(results_dir, slot_name)
+        units.mkdir(parents=True, exist_ok=True)
         for relative, text in boot_units(slot_name).items():
-            unit = _units_dir(results_dir, slot_name) / relative
-            unit.parent.mkdir(parents=True, exist_ok=True)
-            unit.write_text(text, encoding="utf-8")
+            (units / relative).parent.mkdir(parents=True, exist_ok=True)
+            (units / relative).write_text(text, encoding="utf-8")
+        for masked in MASKED_UNITS:
+            (units / masked).symlink_to(os.devnull)
 
 
 def _units_dir(results_dir: Path, slot_name: str) -> Path:

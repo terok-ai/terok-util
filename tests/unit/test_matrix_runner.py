@@ -205,7 +205,8 @@ def test_boot_units_run_the_outer_script_and_hand_back_its_status() -> None:
     units = boot_units("debian13")
 
     service = units[SLOT_SERVICE]
-    assert "ExecStart=/bin/bash /results/outer-debian13.sh" in service
+    # A pipe as the script's stdout, as in the plain shape; the status is the script's.
+    assert '-o pipefail -c "/bin/bash /results/outer-debian13.sh 2>&1 | cat"' in service
     # The console is what libkrun hands to the container's stdout.
     assert "StandardOutput=tty" in service
     assert '"$$EXIT_STATUS" > /results/debian13.exit' in service
@@ -214,8 +215,6 @@ def test_boot_units_run_the_outer_script_and_hand_back_its_status() -> None:
     assert f"Requires=multi-user.target {SLOT_SERVICE}" in units[BOOT_TARGET]
     boot_deadline = units["multi-user.target.d/terok-matrix-boot.conf"]
     assert "JobTimeoutAction=reboot-force" in boot_deadline
-    # An image without a machine ID must not wait at systemd-firstboot's prompt.
-    assert "ConditionFirstBoot=no" in units["systemd-firstboot.service.d/terok-matrix.conf"]
 
 
 def test_inner_script_signals_kernel_isolation_only_under_krun(tmp_path: Path) -> None:

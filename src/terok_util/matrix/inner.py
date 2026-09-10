@@ -109,6 +109,10 @@ def inner_script(config: MatrixConfig, slot_name: str, scope: str = "all") -> st
 #: boot then ends the VM instead of stalling the whole matrix run.
 BOOT_TIMEOUT_SECONDS = 300
 
+#: Units a booted slot masks, because nobody answers its console: the
+#: first-boot prompt of an image without a machine ID, and the console login.
+MASKED_UNITS = ("systemd-firstboot.service", "console-getty.service")
+
 
 def boot_units(slot_name: str) -> dict[str, str]:
     """The units a booted slot runs through, keyed by path under the control dir.
@@ -116,15 +120,15 @@ def boot_units(slot_name: str) -> dict[str, str]:
     crun's krun handler implements no exec, so nothing reaches a booted
     microVM through ``podman exec``.  Its systemd starts ``terok-matrix.target``
     instead: the normal boot, then the outer script as a oneshot service.
-    The service writes to the console, which libkrun hands to podman's
-    stdout as log records; the runner strips their prefix.  Nothing reopens
+    The service pipes the script's output to the console, which libkrun
+    hands to podman's stdout as log records; the runner strips their prefix.
+    Nothing reopens
     libkrun's ``krun-stdout`` port: systemd closed it on taking over PID 1,
     and libkrun panics when a port opens a second time.  The service
     records its exit status on the results mount, because podman's own
     status is the VM's, and then ends the VM with a reboot, the way
     libkrun's own init ends it.  A boot that does not reach
-    ``multi-user.target`` in time ends the VM the same way, and
-    ``systemd-firstboot`` never waits for answers on a console nobody reads.
+    ``multi-user.target`` in time ends the VM the same way.
     """
     service = [
         "[Unit]",
@@ -135,7 +139,10 @@ def boot_units(slot_name: str) -> dict[str, str]:
         "",
         "[Service]",
         "Type=oneshot",
-        f"ExecStart=/bin/bash {RESULTS_MOUNT}/outer-{slot_name}.sh",
+        # A pipe, not the console, is the script's stdout, as in the plain shape:
+        # nothing draws progress bars for a terminal nobody watches.
+        "ExecStart=/bin/bash -o pipefail -c"
+        f' "/bin/bash {RESULTS_MOUNT}/outer-{slot_name}.sh 2>&1 | cat"',
         f"ExecStopPost=/bin/sh -c 'echo \"$$EXIT_STATUS\" > {RESULTS_MOUNT}/{slot_name}.exit'",
         "StandardOutput=tty",
         "TTYPath=/dev/console",
@@ -156,8 +163,6 @@ def boot_units(slot_name: str) -> dict[str, str]:
         SLOT_SERVICE: "\n".join(service) + "\n",
         BOOT_TARGET: "\n".join(target) + "\n",
         "multi-user.target.d/terok-matrix-boot.conf": "\n".join(boot_deadline) + "\n",
-        # An image without a machine ID boots for the first time.
-        "systemd-firstboot.service.d/terok-matrix.conf": "[Unit]\nConditionFirstBoot=no\n",
     }
 
 
