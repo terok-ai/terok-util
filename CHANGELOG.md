@@ -36,6 +36,26 @@ release scope (Tier 1 + Tier 2 per
   that lived in `terok`).
 - `podman` — `podman_userns_args`. Rootless `--userns=keep-id`
   builder.
+## v0.3.1 — Past Prologue
+
+## What's Changed
+* fix(paths): privilege is uid 0 in the initial namespace, not a mapped 0 by @sliwowitz in https://github.com/terok-ai/terok-util/pull/67
+* feat(hardening): harden_self process floor + dispatch exit-code fix by @sliwowitz in https://github.com/terok-ai/terok-util/pull/70
+* feat(hardening): add no-new-privs to the process floor by @sliwowitz in https://github.com/terok-ai/terok-util/pull/72
+* feat(podman): explicit uidmap fallback for podman older than 4.3 by @sliwowitz in https://github.com/terok-ai/terok-util/pull/73
+* feat(podman): version-aware force-pull flag for image builds by @sliwowitz in https://github.com/terok-ai/terok-util/pull/75
+* feat: unified logging facility (journald writer + configure + output capture) by @sliwowitz in https://github.com/terok-ai/terok-util/pull/85
+* feat(hardening): confine_filesystem — Landlock FS floor by @sliwowitz in https://github.com/terok-ai/terok-util/pull/86
+* Run matrix slots under krun (libkrun microVM); add a Manjaro slot by @sliwowitz in https://github.com/terok-ai/terok-util/pull/105
+* fix(matrix): an init as PID 1 in every slot, and git-http-backend on Alpine by @sliwowitz in https://github.com/terok-ai/terok-util/pull/113
+* feat(matrix): a host whose AppArmor confines nested pasta skips the symlinked-pasta slots by @sliwowitz in https://github.com/terok-ai/terok-util/pull/116
+* fix(journal): the line a pty ends with CR LF reaches journald by @sliwowitz in https://github.com/terok-ai/terok-util/pull/117
+* feat(matrix): the systemd slots boot systemd as PID 1 under krun by @sliwowitz in https://github.com/terok-ai/terok-util/pull/118
+* fix(matrix): the booted krun slot without podman exec, and a make jobserver client by @sliwowitz in https://github.com/terok-ai/terok-util/pull/119
+
+
+**Full Changelog**: https://github.com/terok-ai/terok-util/compare/v0.3.0...v0.3.1
+
 ## v0.3.0 — Past Prologue
 
 Port from poetry to uv.
