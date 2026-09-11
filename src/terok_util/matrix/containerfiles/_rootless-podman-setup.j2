@@ -22,3 +22,5 @@ RUN useradd -m{{ user_shell | default('') }} testrunner \
         > /etc/containers/containers.conf \
     && mkdir -p /run/user/$uid \
     && chown testrunner:testrunner /run/user/$uid
+
+{% include "_registry-mirrors.j2" %}

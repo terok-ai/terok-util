@@ -32,4 +32,6 @@ RUN mkdir -p /etc/containers/containers.conf.d \
     && printf '[containers]\nkeyring = false\nnetns = "private"\n' \
         > /etc/containers/containers.conf.d/00-matrix.conf
 
+{% include "_registry-mirrors.j2" %}
+
 WORKDIR /src

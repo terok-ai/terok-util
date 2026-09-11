@@ -28,6 +28,9 @@ def test_every_catalog_slot_has_a_template_per_flavor(tmp_path: Path) -> None:
             assert "{%" not in rendered and "{{" not in rendered, (flavor, name)
             if spec.kind is not SlotKind.NIX:
                 assert "$EXTRA_PACKAGES" in rendered, (flavor, name)
+            # Only a nested podman pulls images, so only it gets the mirrors.
+            mirrored = "registries.conf.d" in rendered
+            assert mirrored is spec.runs_nested_podman(flavor), (flavor, name)
 
 
 def test_shared_blocks_render_with_their_slot_knobs(tmp_path: Path) -> None:

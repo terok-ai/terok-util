@@ -1,0 +1,13 @@
+{#-
+SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+SPDX-License-Identifier: Apache-2.0
+-#}
+{#- Registry mirrors for the nested podman, as a registries.conf.d drop-in. -#}
+# ── Docker Hub mirrors for nested podman ─────────────────────────────
+# Each slot starts with an empty image store, so every test session pulls
+# its base images again, and Docker Hub rate-limits anonymous pulls per IP.
+# podman tries the mirrors in order and falls back to docker.io itself;
+# the drop-in loads after the distro's registries.conf.
+RUN mkdir -p /etc/containers/registries.conf.d \
+    && printf '[[registry]]\nprefix = "docker.io"\nlocation = "docker.io"\n\n[[registry.mirror]]\nlocation = "mirror.gcr.io"\n\n[[registry.mirror]]\nlocation = "public.ecr.aws/docker"\n' \
+        > /etc/containers/registries.conf.d/99-matrix-mirrors.conf
