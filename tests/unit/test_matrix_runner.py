@@ -28,6 +28,7 @@ def test_every_catalog_slot_has_a_template_per_flavor(tmp_path: Path) -> None:
             assert "{%" not in rendered and "{{" not in rendered, (flavor, name)
             if spec.kind is not SlotKind.NIX:
                 assert "$EXTRA_PACKAGES" in rendered, (flavor, name)
+                assert "e2fsprogs" in rendered, (flavor, name)  # mkfs for the krun disk
             # Only a nested podman pulls images, so only it gets the mirrors.
             mirrored = "registries.conf.d" in rendered
             assert mirrored is spec.runs_nested_podman(flavor), (flavor, name)
@@ -245,17 +246,6 @@ def test_krun_inner_moves_the_uv_cache_onto_the_guest_disk(tmp_path: Path) -> No
     )
 
 
-def test_krun_outer_nudges_the_guest_clock(tmp_path: Path) -> None:
-    """Under krun the outer script advances the clock so build mtimes aren't 'future'."""
-    from dataclasses import replace
-
-    from terok_util.matrix.inner import outer_script
-
-    config = load_fixture(tmp_path)
-    assert "date -s" not in outer_script(config, "debian13")  # crun shares the host clock
-    assert "date -s '+2 seconds'" in outer_script(replace(config, krun=True), "debian13")
-
-
 def test_krun_outer_recreates_dev_std_symlinks(tmp_path: Path) -> None:
     """Under krun the outer script restores /dev/stdin so ``podman build -f -`` works."""
     from dataclasses import replace
@@ -311,9 +301,29 @@ def test_krun_podman_slot_ext4_disk_for_store_and_short_tmpdir(tmp_path: Path) -
 
     assert "mkfs.ext4" not in outer_script(config, "debian13")  # crun overlay works direct
     assert "TMPDIR=/kd" not in inner_script(config, "debian13")
-    assert "mkfs.ext4" not in outer_script(krun, "nix")  # nix runs no nested podman
-    dbus = load_fixture(tmp_path / "dbus", minimal_yml(flavor="dbus"))
-    assert "mkfs.ext4" not in outer_script(replace(dbus, krun=True), "debian13")
+    assert "mkfs.ext4" not in outer_script(krun, "nix")  # the nix image has no mkfs.ext4
+
+
+def test_krun_dbus_slot_builds_on_the_ext4_disk(tmp_path: Path) -> None:
+    """A krun slot without nested podman still builds off virtiofs; the clock stays untouched.
+
+    virtiofs stamps host-clock mtimes, ahead of the guest clock, so meson saw
+    dbus-python's build dir as future-dated.  libkrun's time sync resets any
+    nudge to the guest clock.
+    """
+    from dataclasses import replace
+
+    from terok_util.matrix.inner import inner_script, outer_script
+
+    dbus = replace(load_fixture(tmp_path, minimal_yml(flavor="dbus")), krun=True)
+
+    outer = outer_script(dbus, "debian13")
+    assert "mount -o loop /krun-disk.img /kd" in outer
+    assert "/kd/store" not in outer  # no nested podman, so no store to bind
+    assert "date -s" not in outer
+    inner = inner_script(dbus, "debian13")
+    assert "export TMPDIR=/kd\n" in inner
+    assert "export UV_CACHE_DIR=/kd/uv-cache" in inner
 
 
 def test_run_argv_stamps_the_ownership_label_explicitly(tmp_path: Path) -> None:

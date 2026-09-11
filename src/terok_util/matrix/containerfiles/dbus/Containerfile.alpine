@@ -23,6 +23,7 @@ FROM docker.io/library/alpine:3.21
 
 RUN apk add --no-cache \
     dbus \
+    e2fsprogs util-linux \
     shadow \
     build-base python3-dev dbus-dev glib-dev pkgconf meson libffi-dev \
     python3 \

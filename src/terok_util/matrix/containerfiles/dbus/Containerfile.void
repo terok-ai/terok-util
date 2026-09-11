@@ -34,6 +34,7 @@ FROM ghcr.io/void-linux/void-glibc:latest
 RUN xbps-install -Suy xbps \
     && xbps-install -Sy \
         dbus \
+        e2fsprogs \
         shadow util-linux findutils \
         base-devel python3-devel dbus-devel glib-devel pkgconf meson libffi-devel \
         python3 \

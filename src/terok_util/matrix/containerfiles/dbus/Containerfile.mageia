@@ -27,6 +27,7 @@ FROM docker.io/mageia:9
 
 RUN dnf install -y \
         dbus \
+        e2fsprogs util-linux \
         shadow-utils \
         gcc python3-devel dbus-devel glib2-devel pkgconf meson libffi-devel \
         python3 \

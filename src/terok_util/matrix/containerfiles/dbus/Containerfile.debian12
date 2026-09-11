@@ -8,6 +8,7 @@ FROM docker.io/library/debian:12
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     dbus \
+    e2fsprogs \
     gcc python3-dev libdbus-1-dev libglib2.0-dev pkg-config meson \
     python3 \
     git curl ca-certificates \

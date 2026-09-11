@@ -61,16 +61,17 @@ KRUN_RUNTIME = "krun"
 # rootless podman, so the host already has it.
 KRUN_PASST_ANNOTATION = "krun.use_passt=1"
 
-# Under krun the slot's rootfs is virtiofs, which root-squashes the subuid
-# ``mkdir``/``chown`` rootless podman does as it unpacks/runs images
-# (virtiofsd runs as the host user).  A loop-mounted ext4 image is a
-# guest-kernel-owned filesystem where those ids resolve; the nested-podman
-# store and buildah's per-``RUN``-step rootfs (``TMPDIR``) live on it.  The
-# mount point is ``TMPDIR`` itself and is deliberately short: pytest hangs
-# ``tmp_path`` off ``TMPDIR``, and the socket tests would blow the 107-byte
-# ``AF_UNIX`` limit under a long prefix.  The image lives in the container's
-# own (``--rm``-cleaned) rootfs, sparse — the size is a ceiling against a
-# runaway pull, not an allocation.
+# Under krun the slot's rootfs is virtiofs, served by the host: it stamps
+# files with the host clock, which runs ahead of the guest's, and it
+# root-squashes the subuid ``mkdir``/``chown`` rootless podman does as it
+# unpacks/runs images (virtiofsd runs as the host user).  A loop-mounted ext4
+# image is a guest-kernel-owned filesystem with neither trait.  Every krun
+# container slot keeps ``TMPDIR`` and the uv cache on it; the nested-podman
+# slots also bind their store there.  The mount point is ``TMPDIR`` itself
+# and is deliberately short: pytest hangs ``tmp_path`` off ``TMPDIR``, and
+# the socket tests would blow the 107-byte ``AF_UNIX`` limit under a long
+# prefix.  The image lives in the container's own (``--rm``-cleaned) rootfs,
+# sparse — the size is a ceiling against a runaway pull, not an allocation.
 KRUN_DISK_IMG = "/krun-disk.img"
 KRUN_DISK_SIZE = "16G"
 KRUN_DISK_MOUNT = "/kd"
@@ -162,7 +163,7 @@ class SlotSpec:
 
         True only for a container-kind slot on the ``podman`` flavor: the nix
         slot has no podman inside, and the dbus flavor runs none.  This gates
-        the resolv.conf fix and, under krun, the device/disk/tmp setup.
+        the resolv.conf fix and, under krun, the device setup and store binds.
         """
         return flavor == "podman" and self.kind is SlotKind.CONTAINER
 

@@ -62,11 +62,12 @@ def outer_script(config: MatrixConfig, slot_name: str, *, boots_systemd: bool = 
     lines = ["#!/bin/bash", "set -e -o pipefail", ""]
     if config.krun:
         lines += _krun_dev_std_symlinks()
-        lines += _krun_clock_skew_guard()
+        if spec.kind is SlotKind.CONTAINER:
+            lines += _krun_real_disk(spec.user)
         if spec.runs_nested_podman(config.flavor):
             lines += _krun_relax_devices()
             lines += _krun_mount_mqueue()
-            lines += _krun_real_disk(spec.user, bind_runroot=not boots_systemd)
+            lines += _krun_podman_binds(spec.user, bind_runroot=not boots_systemd)
     lines += [
         f"cp -a {SOURCE_MOUNT} {WORKSPACE_DIR}",
         f"chown -R {spec.user}:{spec.user} {WORKSPACE_DIR}",
@@ -88,7 +89,7 @@ def inner_script(config: MatrixConfig, slot_name: str, scope: str = "all") -> st
     lines = ["#!/bin/bash", "set -e -o pipefail", ""]
     if spec.kind is SlotKind.CONTAINER:
         lines += ["export XDG_RUNTIME_DIR=/run/user/$(id -u)"]
-    if config.krun and spec.runs_nested_podman(config.flavor):
+    if config.krun and spec.kind is SlotKind.CONTAINER:
         lines += _krun_tmpdir_export()
     lines += _env_contract(config, slot_name)
     lines += ["", f"cd {WORKSPACE_DIR}", ""]
@@ -169,25 +170,6 @@ def boot_units(slot_name: str) -> dict[str, str]:
 # ── Outer building blocks ──────────────────────────────────────────
 
 
-def _krun_clock_skew_guard() -> list[str]:
-    """Advance the guest clock so build tools never see fs mtimes as ``future``.
-
-    Under krun the container filesystem is virtiofs, which stamps file mtimes
-    with the *host* clock, but the microVM guest's wall clock lags it (tens of
-    ms — a plain offset, not a timezone).  A just-written file then looks
-    future-dated to strict build tools: meson aborts with ``Clock skew
-    detected`` and, for example, ``dbus-python`` fails to build.  Nudge the
-    guest clock a couple of seconds ahead of the fs clock so every file reads
-    as past.  Root-only (the outer script runs as root); best-effort so a
-    read-only clock never aborts the slot.
-    """
-    return [
-        'echo "--- krun: nudging the guest clock past the virtiofs mtime clock ---"',
-        "date -s '+2 seconds' >/dev/null 2>&1 || true",
-        "",
-    ]
-
-
 def _krun_dev_std_symlinks() -> list[str]:
     """Give the krun guest the standard ``/dev/std*`` fd symlinks.
 
@@ -251,20 +233,55 @@ def _krun_mount_mqueue() -> list[str]:
     ]
 
 
-def _krun_real_disk(user: str, bind_runroot: bool) -> list[str]:
-    """Loop-mount one ext4 disk under krun for the paths that need it.
+def _krun_real_disk(user: str) -> list[str]:
+    """Loop-mount one ext4 disk under krun: a filesystem the guest kernel owns.
 
-    krun's rootfs is virtiofs, which root-squashes the subuid ``mkdir``/
-    ``chown`` that rootless podman does as it unpacks and runs images
-    (virtiofsd runs as the host user and can't set those ids).  Three things
-    hit that wall, all fixed by living on a guest-kernel-owned ext4:
+    krun's rootfs is virtiofs, which the host serves.  Work that two of its
+    traits break moves onto this disk:
+
+    * **host-clock mtimes** — virtiofs stamps files with the host clock, and
+      the guest's wall clock lags it by tens of ms.  libkrun's time sync sets
+      the guest clock only when it is more than 100 ms off, so the lag stays,
+      and a just-written file looks future-dated: meson aborts with ``Clock
+      skew detected``, and ``dbus-python`` fails to build.  The ext4 takes
+      its mtimes from the guest clock.
+    * **squashed ids** — virtiofsd runs as the host user and cannot set the
+      subuid ids that nested rootless podman ``mkdir``/``chown``s (see
+      [`_krun_podman_binds`][terok_util.matrix.inner._krun_podman_binds]).
+
+    The mount point is short (``/kd``) on purpose — ``TMPDIR`` is it (see
+    [`_krun_tmpdir_export`][terok_util.matrix.inner._krun_tmpdir_export]),
+    and pytest hangs its ``tmp_path`` (and the Unix sockets tests bind there)
+    off ``TMPDIR``; a long prefix pushes those past the 107-byte ``AF_UNIX``
+    limit.  The image is sparse and lives in the container's own
+    (``--rm``-cleaned) rootfs; no journal (throwaway).  Needs ``mkfs.ext4``
+    and a loop-capable ``mount`` in the image; the nix image has neither.
+    """
+    disk = KRUN_DISK_MOUNT
+    return [
+        f'echo "--- krun: loop-ext4 at {disk}, a guest-kernel filesystem ---"',
+        f"truncate -s {KRUN_DISK_SIZE} {KRUN_DISK_IMG}",
+        f"mkfs.ext4 -qF -O ^has_journal -E lazy_itable_init=1 {KRUN_DISK_IMG}",
+        f"mkdir -p {disk}",
+        f"mount -o loop {KRUN_DISK_IMG} {disk}",
+        f"chown {user}:{user} {disk}",
+        "",
+    ]
+
+
+def _krun_podman_binds(user: str, bind_runroot: bool) -> list[str]:
+    """Bind nested rootless podman's paths onto the krun disk.
+
+    virtiofsd runs as the host user and can't set the subuid ids rootless
+    podman ``mkdir``/``chown``s as it unpacks and runs images.  Three things
+    hit that wall, all fixed by living on the ext4 from
+    [`_krun_real_disk`][terok_util.matrix.inner._krun_real_disk]:
 
     * the nested-podman **store** — the image-unpack untar
       (``.pivot_root: permission denied``);
     * **build tmp** — buildah runs each ``RUN`` step in a throwaway
-      container whose rootfs it scaffolds under ``GetTempDir()`` (``TMPDIR``,
-      via [`_krun_tmpdir_export`][terok_util.matrix.inner._krun_tmpdir_export]);
-      on virtiofs that ``mkdir …/mnt/rootfs`` is squashed.
+      container whose rootfs it scaffolds under ``GetTempDir()``; ``TMPDIR``
+      is the disk itself, so this one needs no bind;
     * the rootless **runroot** (``$XDG_RUNTIME_DIR/containers``, separate from
       the store) — podman 4.x subuid-chowns each container's runroot files
       (e.g. ``resolv.conf``) under ``keep-id``, squashed on virtiofs (podman
@@ -278,28 +295,15 @@ def _krun_real_disk(user: str, bind_runroot: bool) -> list[str]:
 
     The build **workspace** is deliberately *not* bound here: the build's
     read-only context overlay is driven by fuse-overlayfs, which works over
-    plain virtiofs, so the repo copy stays on the rootfs.  The mount point is
-    short (``/kd``) on purpose — ``TMPDIR`` is it, and pytest hangs its
-    ``tmp_path`` (and the Unix sockets tests bind there) off ``TMPDIR``; a
-    long prefix pushes those past the 107-byte ``AF_UNIX`` limit.
-
-    The image is sparse and lives in the container's own (``--rm``-cleaned)
-    rootfs; no journal (throwaway).  Needs ``e2fsprogs`` in the image.
-    ``install -d`` as root chowns only its leaf, so name ~/.local and
-    ~/.local/share too or the test user can't create a sibling like
-    ~/.local/share/terok (shield state).
+    plain virtiofs, so the repo copy stays on the rootfs.
     """
     disk, home = KRUN_DISK_MOUNT, f"/home/{user}"
     store = f"{home}/.local/share/containers"
-    purposes = "the store + build tmp" + (" + runroot" if bind_runroot else "")
+    purposes = "store" + (" + runroot" if bind_runroot else "")
     lines = [
-        f'echo "--- krun: loop-ext4 for {purposes} (virtiofs squashes subuid mkdir) ---"',
-        f"truncate -s {KRUN_DISK_SIZE} {KRUN_DISK_IMG}",
-        f"mkfs.ext4 -qF -O ^has_journal -E lazy_itable_init=1 {KRUN_DISK_IMG}",
-        f"mkdir -p {disk}",
-        f"mount -o loop {KRUN_DISK_IMG} {disk}",
+        f'echo "--- krun: nested podman {purposes} on {disk} (virtiofs squashes subuid mkdir) ---"',
         f"mkdir -p {disk}/store",
-        f"chown {user}:{user} {disk} {disk}/store",
+        f"chown {user}:{user} {disk}/store",
         # ``install -d`` (as root) chowns only the leaf, leaving ~/.local and
         # ~/.local/share root-owned; the test user must own them too, or a
         # sibling like ~/.local/share/terok (shield state) can't be created.
@@ -319,19 +323,14 @@ def _krun_real_disk(user: str, bind_runroot: bool) -> list[str]:
 
 
 def _krun_tmpdir_export() -> list[str]:
-    """Point ``TMPDIR`` and the uv cache at the ext4 disk.
+    """Point ``TMPDIR`` and the uv cache at the krun disk.
 
-    Runs in the inner (test-user) script.  buildah scaffolds each ``RUN``
-    step's throwaway-container rootfs under ``GetTempDir()`` (``TMPDIR`` or
-    ``/var/tmp``); on virtiofs the subuid ``mkdir …/mnt/rootfs`` is squashed,
-    so it must be the ext4 mount from
-    [`_krun_real_disk`][terok_util.matrix.inner._krun_real_disk].  The mount
-    point *is* ``TMPDIR`` (not a subdir) and is short so pytest's
-    ``TMPDIR``-rooted Unix sockets stay under the 107-byte ``AF_UNIX`` limit.
-
-    The uv cache moves too: sdists build there, and meson refuses a build
-    dir whose files are stamped in the future — virtiofs stamps them with
-    the host clock, which runs a few milliseconds ahead of the guest's.
+    Runs in the inner (test-user) script of every krun container slot.  The
+    uv cache is where sdists unpack and build, so meson's build dirs get
+    guest-clock mtimes there; ``TMPDIR`` carries pytest's ``tmp_path`` and
+    buildah's per-``RUN``-step rootfs.  The mount point *is* ``TMPDIR`` (not
+    a subdir).  [`_krun_real_disk`][terok_util.matrix.inner._krun_real_disk]
+    says why both leave virtiofs.
     """
     return [f"export TMPDIR={KRUN_DISK_MOUNT}", f"export UV_CACHE_DIR={KRUN_DISK_MOUNT}/uv-cache"]
 
