@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+FROM docker.io/nixos/nix:latest AS builder
+
+{% include "_header.j2" %}
+
+# NixOS 26.05, with its own activation, systemd and security wrappers.
+ARG NIXPKGS_REV=1bc55b9def8165e82073919945c3239903fe4dc2
+RUN nix-build --option sandbox false \
+        -I nixpkgs=https://github.com/NixOS/nixpkgs/archive/${NIXPKGS_REV}.tar.gz \
+        '<nixpkgs>' -A xz.bin -o /tmp/xz
+COPY <<'NIX' /tmp/configuration.nix
+{% include "_nixos-configuration.nix" %}
+NIX
+RUN EXTRA_PACKAGES="$EXTRA_PACKAGES" nix-build --option sandbox false \
+        -I nixpkgs=https://github.com/NixOS/nixpkgs/archive/${NIXPKGS_REV}.tar.gz \
+        -I nixos-config=/tmp/configuration.nix '<nixpkgs/nixos>' \
+        -A config.system.build.tarball -o /tmp/nixos \
+    && mkdir /rootfs \
+    && tar --use-compress-program=/tmp/xz-bin/bin/xz -xf /tmp/nixos/tarball/*.tar.xz -C /rootfs
+
+FROM scratch
+
+{% include "_header.j2" %}
+
+COPY --from=builder /rootfs /
+ENV PATH=/run/wrappers/bin:/run/current-system/sw/bin:/sw/bin
+WORKDIR /src

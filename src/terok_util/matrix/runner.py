@@ -22,11 +22,11 @@ import subprocess  # nosec B404 - fixed-argv podman shellouts
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from shutil import which
 from typing import IO, cast
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
+from terok_util.host_tools import find_host_tool
 from terok_util.security import sanitize_tty
 
 from .catalog import (
@@ -39,7 +39,6 @@ from .catalog import (
     SOURCE_MOUNT,
     SYSTEM_BUS_SOCKET_UNIT,
     SYSTEMD_CONTROL_DIR,
-    SYSTEMD_INIT,
     UV_IMAGE_TAG,
     UV_MANAGED_PYTHON_DIR,
     SlotKind,
@@ -109,6 +108,7 @@ def render_containerfile(config: MatrixConfig, slot_name: str) -> str:
     kind = SLOTS[slot_name].kind
     flavor = "nix" if kind is SlotKind.NIX else config.flavor
     rendered = _TEMPLATES.get_template(f"{flavor}/Containerfile.{slot_name}").render(
+        flavor=flavor,
         uv_tag=UV_IMAGE_TAG,
         uv_python_dir=UV_MANAGED_PYTHON_DIR,
     )
@@ -224,9 +224,13 @@ def _boots_systemd(config: MatrixConfig, slot_name: str) -> bool:
     asked.  The matrix installs neither.  A throwaway probe
     container on the default runtime, with no microVM and no network, checks
     the built image; the label lets the teardown sweep find a leftover.
+    Images requiring activation always boot; their runtime paths do not
+    exist yet, so a preboot probe cannot judge them.
     """
     if not SLOTS[slot_name].may_boot_systemd(config.flavor, config.krun):
         return False
+    if SLOTS[slot_name].requires_boot:
+        return True
     probe = subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
         [
             "podman",
@@ -239,7 +243,7 @@ def _boots_systemd(config: MatrixConfig, slot_name: str) -> bool:
             "test",
             f"{config.image_prefix}:{slot_name}",
             "-x",
-            SYSTEMD_INIT,
+            SLOTS[slot_name].boot_init,
             "-a",
             "-e",
             SYSTEM_BUS_SOCKET_UNIT,
@@ -355,8 +359,8 @@ def prune_dangling(config: MatrixConfig) -> int:
         f"label={OWNERSHIP_LABEL}={config.image_prefix}",
     ]
     for wrapper in (["ionice", "-c3"], ["nice", "-n19"]):
-        if which(wrapper[0]):
-            argv = wrapper + argv
+        if binary := find_host_tool(wrapper[0]):
+            argv = [binary, *wrapper[1:], *argv]
     pruned = subprocess.run(argv, check=False, capture_output=True, text=True)  # nosec B603
     if pruned.returncode != 0:
         _warn_prune_failure(pruned.stderr)
@@ -513,7 +517,7 @@ def _run_argv(
     # A booted slot's systemd starts the target that runs the outer script
     # (see boot_units); without status lines and info logs the log stays the slot's.
     argv += (
-        [SYSTEMD_INIT, f"--unit={BOOT_TARGET}", "--show-status=no", "--log-level=warning"]
+        [spec.boot_init, f"--unit={BOOT_TARGET}", "--show-status=no", "--log-level=warning"]
         if boots_systemd
         else ["bash", _outer_in_container(slot_name)]
     )

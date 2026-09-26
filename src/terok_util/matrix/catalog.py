@@ -150,6 +150,10 @@ class SlotSpec:
             is not container-namespaced, so on a host with the distro
             ``passt`` profile the nested pasta runs under that profile and
             loses its netns — the runner skips such slots there.
+        requires_boot: The image needs its normal boot to provision runtime
+            state (NixOS security wrappers); skip it outside ``--krun``.
+        boot_init: Image entry point for a booted slot.
+        bash_path: Bash path for scripts and systemd units in this image.
     """
 
     expected_podman: str = "latest"
@@ -157,6 +161,9 @@ class SlotSpec:
     user: str = "testrunner"
     kind: SlotKind = SlotKind.CONTAINER
     pasta_symlink: bool = False
+    requires_boot: bool = False
+    boot_init: str = SYSTEMD_INIT
+    bash_path: str = "/bin/bash"
 
     def runs_nested_podman(self, flavor: str) -> bool:
         """Whether this slot runs nested rootless podman under *flavor*.
@@ -174,11 +181,12 @@ class SlotSpec:
         image's systemd can be PID 1 and give the tests a real per-user
         manager.  Under a shared kernel the slot stays a plain ``--init``
         container, and the systemd-free floor slots stay systemd-free
-        everywhere.  The runner still checks the built image: a slot boots
-        only a systemd and system bus its image already has, and the matrix
-        installs neither.
+        everywhere.  NixOS requires boot even on the dbus flavor.  Otherwise
+        the runner checks for the image's own systemd and system bus.
         """
-        return krun and self.runs_nested_podman(flavor) and not self.non_systemd
+        return krun and (
+            self.requires_boot or (self.runs_nested_podman(flavor) and not self.non_systemd)
+        )
 
 
 # Expected podman versions are pinned to the exact distro-shipped point
@@ -197,4 +205,10 @@ SLOTS: dict[str, SlotSpec] = {
     "mageia": SlotSpec(expected_podman="4.9.5"),
     "manjaro": SlotSpec(expected_podman="6.1.0", pasta_symlink=True),
     "nix": SlotSpec(kind=SlotKind.NIX),
+    "nixos": SlotSpec(
+        expected_podman="5.8.7",
+        requires_boot=True,
+        boot_init="/init",
+        bash_path="/run/current-system/sw/bin/bash",
+    ),
 }

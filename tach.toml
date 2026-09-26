@@ -26,6 +26,16 @@ layers = ["foundation"]
 
 # Each sub-module is leaf-shaped — zero internal deps.
 
+[[modules]]
+path = "terok_util.host_tools"
+layer = "foundation"
+depends_on = []
+
+[[modules]]
+path = "terok_util.setup"
+layer = "foundation"
+depends_on = []
+
 # CLI registry types (CommandDef / ArgDef / CommandTree) shared by
 # every sibling that builds a CLI tree.
 [[modules]]

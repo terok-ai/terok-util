@@ -12,7 +12,7 @@ Such a test must skip in the runtime it cannot use — not fail — so a slot
 reports green for what it actually can run.
 
 This plugin auto-skips those tests, tagged by the marker that governs
-them, and writes the per-reason skip counts to
+them, and writes separate matrix and ordinary pytest skip counts to
 ``<results>/<slot>.skips.json`` when the run is inside the matrix (the
 runner reads them into the closing ``SKIPPED`` summary).  The rules apply
 off-matrix too — a developer box without krun skips ``needs_krun`` tests —
@@ -46,6 +46,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -67,9 +68,9 @@ _MARKER_HELP = {
 #: plugin only adds a runtime skip rule for them, so it must not re-register.
 _OWNED_MARKERS = ("needs_krun", "needs_loopback", "needs_vm", "needs_x86")
 
-#: Where this run accumulates its skip counts, keyed on config, so the
-#: session-finish hook can write them once per pytest invocation.
-_COUNTS_KEY = pytest.StashKey[dict]()
+#: Actual skipped nodes, not marked or deselected tests; count each once.
+_SKIPS_KEY = pytest.StashKey[dict[str, tuple[str, str]]]()
+_MATRIX_REASON_KEY = pytest.StashKey[str]()
 
 
 #: PID 1's comm inside a libkrun microVM — a runtime fact true whether or not
@@ -125,18 +126,53 @@ def pytest_configure(config: pytest.Config) -> None:
     """Register the runtime markers this plugin owns for ``--strict-markers``."""
     for name in _OWNED_MARKERS:
         config.addinivalue_line("markers", f"{name}: {_MARKER_HELP[name]}")
-    config.stash[_COUNTS_KEY] = {}
+    config.stash[_SKIPS_KEY] = {}
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip tests the current runtime cannot run, counting them by reason."""
-    counts = config.stash[_COUNTS_KEY]
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark tests the current runtime cannot run without counting deselections."""
     for item in items:
         reason = _skip_reason({m.name for m in item.iter_markers()})
         if reason is None:
             continue
         item.add_marker(pytest.mark.skip(reason=f"{reason}: {_MARKER_HELP[reason]}"))
-        counts[reason] = counts.get(reason, 0) + 1
+        item.stash[_MATRIX_REASON_KEY] = reason
+
+
+def _record_skip(
+    config: pytest.Config,
+    report: pytest.TestReport | pytest.CollectReport,
+    marker: str | None = None,
+) -> None:
+    """Record an observed skip, excluding xfail and repeated test-phase reports."""
+    if not report.skipped or hasattr(report, "wasxfail"):
+        return
+    reason = str(report.longrepr[2] if isinstance(report.longrepr, tuple) else report.longrepr)
+    reason = reason.removeprefix("Skipped: ")
+    source = "pytest"
+    if marker and reason == f"{marker}: {_MARKER_HELP[marker]}":
+        source, reason = "matrix", marker
+    config.stash[_SKIPS_KEY].setdefault(report.nodeid, (source, reason))
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_makereport(
+    item: pytest.Item,
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Count the final test outcome after pytest has distinguished skips from xfail."""
+    report = yield
+    _record_skip(item.config, report, item.stash.get(_MATRIX_REASON_KEY, None))
+    return report
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(
+    collector: pytest.Collector,
+) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+    """Include collection skips such as a module-level ``pytest.importorskip``."""
+    report = yield
+    _record_skip(collector.config, report)
+    return report
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
@@ -148,21 +184,22 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     from terok_util.matrix.catalog import RESULTS_MOUNT, SLOT_ENV, SLOTS
 
     slot = os.environ.get(SLOT_ENV)
-    counts = session.config.stash[_COUNTS_KEY]
+    skips = session.config.stash[_SKIPS_KEY]
     # ``slot`` names the report file; accept only a known catalog slot so a
     # stray or crafted SLOT_ENV can never steer the write outside the mount.
-    if slot not in SLOTS or not counts:
+    if slot not in SLOTS or not skips:
         return
     path = Path(RESULTS_MOUNT) / f"{slot}.skips.json"
-    merged: dict[str, int] = {}
+    merged: dict[str, dict[str, int]] = {"matrix": {}, "pytest": {}}
     if path.is_file():
         try:
             merged = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            merged = {}
-    for reason, count in counts.items():
-        merged[reason] = merged.get(reason, 0) + count
+            pass
     try:
+        for source, reason in skips.values():
+            counts = merged[source]
+            counts[reason] = counts.get(reason, 0) + 1
         path.write_text(json.dumps(merged, sort_keys=True), encoding="utf-8")
-    except OSError:
+    except (OSError, KeyError, TypeError, AttributeError):
         pass  # best-effort telemetry; never fail a green run over a report file

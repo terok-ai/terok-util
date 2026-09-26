@@ -29,15 +29,12 @@ unknown-name rejection — lives here so it cannot drift apart again.
 from __future__ import annotations
 
 import os
-import shutil
 import socket
 from collections.abc import Callable, Mapping
 
-from .catalog import EXPECT_ENV
+from terok_util.host_tools import find_host_tool
 
-# dnsmasq/nft install into sbin on several distros while the test user's
-# PATH may omit those dirs — probes search with them appended.
-_SBIN_DIRS = ("/usr/sbin", "/sbin", "/usr/local/sbin")
+from .catalog import EXPECT_ENV
 
 
 def check_capability_contract(probes: Mapping[str, Callable[[], bool]]) -> str | None:
@@ -65,9 +62,8 @@ def check_capability_contract(probes: Mapping[str, Callable[[], bool]]) -> str |
 
 
 def binary_on_path(name: str) -> bool:
-    """Whether *name* resolves on the sbin-extended ``PATH``."""
-    search = os.pathsep.join([os.environ.get("PATH", ""), *_SBIN_DIRS])
-    return shutil.which(name, path=search) is not None
+    """Whether the launching environment can actually discover *name*."""
+    return find_host_tool(name) is not None
 
 
 def tcp_reachable(ip: str, port: int, timeout: float = 5.0) -> bool:

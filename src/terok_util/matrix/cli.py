@@ -83,21 +83,22 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     targets = list(args.slots or config.slots)
-    unknown = [name for name in targets if name not in config.slots]
-    if unknown:
+    available = [name for name in targets if name in config.slots]
+    _warn_unavailable_slots(config, targets)
+    if not available:
         print(
-            f"{RED}Error: unknown slot(s) {unknown}. Available: {list(config.slots)}{RESET}",
+            f"{RED}Error: no requested slots are available. Available: {list(config.slots)}{RESET}",
             file=sys.stderr,
         )
         return 2
 
     if args.list:
-        for name in sorted(targets):
+        for name in sorted(available):
             expectation = _version_expectation(config, name)
             print(f"{name} ({expectation})" if expectation else name)
         return 0
     if args.slots_json:
-        print(json.dumps(targets))
+        print(json.dumps(available))
         return 0
     if args.image_prefix:
         print(config.image_prefix)
@@ -123,6 +124,17 @@ def main(argv: list[str] | None = None) -> int:
             signal.signal(signal.SIGTERM, previous)
 
 
+def _warn_unavailable_slots(config: MatrixConfig, targets: list[str]) -> None:
+    """Name requested slots this package cannot run without masking usable ones."""
+    unavailable = [name for name in targets if name not in config.slots]
+    if unavailable:
+        print(
+            f"{YELLOW}WARNING: skipping {len(unavailable)} requested matrix slot(s) "
+            f"unavailable for this package: {', '.join(unavailable)}{RESET}",
+            file=sys.stderr,
+        )
+
+
 # ── The matrix walk ────────────────────────────────────────────────
 
 
@@ -142,13 +154,15 @@ def _run_matrix(
     """
     started = _monotonic_now()
     try:
-        return _walk_matrix(config, targets, args, results_dir)
+        available = [name for name in targets if name in config.slots]
+        return _walk_matrix(config, available, args, results_dir)
     except KeyboardInterrupt:
         print(f"\n{YELLOW}Interrupted — tearing down.{RESET}", file=sys.stderr)
         return EXIT_INTERRUPTED
     finally:
         if not args.keep_dangling:
             _teardown(config)
+        _warn_unavailable_slots(config, targets)
         # timedelta's H:MM:SS is the same shape pytest prints in the
         # per-slot summaries above -- one clock format per log.
         elapsed = timedelta(seconds=round(_monotonic_now() - started))
@@ -329,6 +343,8 @@ def _skip_reason(config: MatrixConfig, name: str) -> str:
     slot = config.slots[name]
     if platform.machine() in slot.skip_arches:
         return slot.skip_reason or "not supported on this architecture"
+    if SLOTS[name].requires_boot and not config.krun:
+        return "requires --krun for a booted system"
     if config.host_confines_pasta and SLOTS[name].pasta_symlink:
         return "host AppArmor confines nested pasta"
     return ""
@@ -342,44 +358,44 @@ def _print_slot_heading(config: MatrixConfig, name: str, scope: str) -> None:
     print(f"    {DIM}scope: {scope}, user: {SLOTS[name].user}{RESET}\n")
 
 
-def _read_slot_skips(results_dir: Path, name: str) -> dict[str, int]:
-    """The per-reason within-slot skip counts the plugin wrote, or ``{}``.
+def _read_slot_skips(results_dir: Path, name: str) -> dict[str, dict[str, int]]:
+    """The matrix/pytest skip counts the plugin wrote, or ``{}``.
 
     The in-container plugin writes ``<slot>.skips.json`` into the results
-    mount (see ``matrix.pytest_plugin``); this reads the host side.  A
-    missing or unreadable file means the slot skipped nothing.
+    mount (see ``matrix_skip_plugin``); this reads the host side.  A
+    missing or unreadable file provides no skip counts.
     """
     path = results_dir / f"{name}.skips.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or set(data) != {"matrix", "pytest"}:
         return {}
     # A truncated or crafted report can carry null, non-numeric, or negative
     # counts.  Treat any of those as unreadable, like a bad file, rather than
     # crash the summary on int(None) or a negative tally.
-    if any(type(v) is not int or v < 0 for v in data.values()):
+    if any(
+        not isinstance(counts, dict) or any(type(v) is not int or v < 0 for v in counts.values())
+        for counts in data.values()
+    ):
         return {}
-    return {str(k): v for k, v in data.items()}
+    return data
 
 
-def _print_within_slot_skips(within: dict[str, dict[str, int]]) -> None:
-    """The per-slot ``SKIPPED`` block: which tests a runtime could not run.
-
-    Shows, per slot, the count for each reason (the governing marker) so a
-    glance says what still needs a different runtime — ``needs_krun`` under
-    crun, ``needs_podman``/``needs_loopback`` under krun, and so on.
-    """
+def _print_within_slot_skips(within: dict[str, dict[str, dict[str, int]]]) -> None:
+    """Show separate matrix/pytest skip totals and reasons for each slot."""
     if not within:
         return
-    print(f"\n{BOLD}SKIPPED (not runnable in this runtime):{RESET}")
+    print(f"\n{BOLD}SKIPPED (within slots; collection skips count as one):{RESET}")
     for name in sorted(within):
-        parts = ", ".join(
-            f"{count}x {reason}"
-            for reason, count in sorted(within[name].items(), key=lambda kv: (-kv[1], kv[0]))
+        totals = ", ".join(
+            f"{source}={sum(counts.values())}" for source, counts in within[name].items()
         )
-        print(f"  {YELLOW}{name}{RESET}: {parts}")
+        print(f"  {YELLOW}{name}{RESET}: {totals}")
+        for source, counts in within[name].items():
+            for reason, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+                print(f"    {source}: {count}x {reason}")
 
 
 def _print_summary(
@@ -388,7 +404,7 @@ def _print_summary(
     skipped: list[str],
     failed: list[str],
     results: dict[str, SlotResult],
-    within: dict[str, dict[str, int]],
+    within: dict[str, dict[str, dict[str, int]]],
 ) -> None:
     """The closing skip block plus the classic PASS/SKIP/FAIL table.
 

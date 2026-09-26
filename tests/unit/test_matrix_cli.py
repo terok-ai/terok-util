@@ -68,10 +68,27 @@ def test_list_respects_an_explicit_selection(
 
 
 def test_unknown_slot_is_a_usage_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """A typo'd slot fails fast instead of running the wrong subset."""
+    """A selection with no usable slots fails without invoking the runner."""
     assert main([*_config_args(tmp_path), "atari800"]) == 2
 
-    assert "unknown slot" in capsys.readouterr().err
+    assert "no requested slots are available" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("query", ["--list", "--slots-json"])
+def test_queries_omit_unavailable_slots_without_polluting_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], query: str
+) -> None:
+    """Queries retain usable requested slots and warn only on stderr."""
+    assert main([*_config_args(tmp_path), query, "alpine", "nixos", "atari800"]) == 0
+
+    captured = capsys.readouterr()
+    if query == "--slots-json":
+        assert json.loads(captured.out) == ["alpine"]
+    else:
+        assert captured.out.strip().startswith("alpine")
+        assert len(captured.out.splitlines()) == 1
+    assert "skipping 2 requested matrix slot(s)" in captured.err
+    assert "nixos, atari800" in captured.err
 
 
 def test_missing_config_is_reported_not_raised(
@@ -84,11 +101,12 @@ def test_missing_config_is_reported_not_raised(
 
 
 def test_read_slot_skips_reads_the_report(tmp_path: Path) -> None:
-    """The runner reads a slot's per-reason skip counts; missing means empty."""
+    """The runner reads both sources' reason counts; missing means no report."""
     from terok_util.matrix.cli import _read_slot_skips
 
-    (tmp_path / "manjaro.skips.json").write_text('{"needs_podman": 12, "needs_loopback": 6}')
-    assert _read_slot_skips(tmp_path, "manjaro") == {"needs_podman": 12, "needs_loopback": 6}
+    counts = {"matrix": {"needs_krun": 12}, "pytest": {"missing tool": 6}}
+    (tmp_path / "manjaro.skips.json").write_text(json.dumps(counts))
+    assert _read_slot_skips(tmp_path, "manjaro") == counts
     assert _read_slot_skips(tmp_path, "fedora44") == {}
 
 
@@ -96,7 +114,15 @@ def test_read_slot_skips_rejects_malformed_counts(tmp_path: Path) -> None:
     """A null, non-numeric, or negative count reads as empty, not a crash."""
     from terok_util.matrix.cli import _read_slot_skips
 
-    for bad in ('{"needs_krun": null}', '{"needs_krun": "lots"}', '{"needs_krun": -3}', "[1, 2]"):
+    for bad in (
+        '{"matrix": {"needs_krun": null}, "pytest": {}}',
+        '{"matrix": {"needs_krun": "lots"}, "pytest": {}}',
+        '{"matrix": {"needs_krun": -3}, "pytest": {}}',
+        '{"matrix": {"needs_krun": true}, "pytest": {}}',
+        '{"matrix": {}, "pytest": []}',
+        '{"matrix": {}}',
+        "[1, 2]",
+    ):
         (tmp_path / "bad.skips.json").write_text(bad)
         assert _read_slot_skips(tmp_path, "bad") == {}
 
@@ -104,14 +130,28 @@ def test_read_slot_skips_rejects_malformed_counts(tmp_path: Path) -> None:
 def test_within_slot_skip_block_lists_reasons_by_count(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The SKIPPED block shows each slot's reasons, most-skipped first."""
+    """Separate source totals accompany each slot's reasons, most-skipped first."""
     from terok_util.matrix.cli import _print_within_slot_skips
 
-    _print_within_slot_skips({"manjaro": {"needs_podman": 12, "needs_x86": 6}})
+    _print_within_slot_skips(
+        {"manjaro": {"matrix": {"needs_krun": 12, "needs_x86": 6}, "pytest": {"missing tool": 3}}}
+    )
     out = capsys.readouterr().out
     assert "SKIPPED" in out
     assert "manjaro" in out
-    assert out.index("12x needs_podman") < out.index("6x needs_x86")
+    assert "matrix=18, pytest=3" in out
+    assert out.index("matrix: 12x needs_krun") < out.index("matrix: 6x needs_x86")
+    assert "pytest: 3x missing tool" in out
+
+
+def test_within_slot_skip_block_keeps_zero_for_other_source(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A runtime-only skip still explicitly reports that pytest skipped zero."""
+    from terok_util.matrix.cli import _print_within_slot_skips
+
+    _print_within_slot_skips({"manjaro": {"matrix": {"needs_krun": 1}, "pytest": {}}})
+    assert "matrix=1, pytest=0" in capsys.readouterr().out
 
 
 def test_within_slot_skip_block_silent_when_nothing_skipped(
