@@ -83,21 +83,22 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     targets = list(args.slots or config.slots)
-    unknown = [name for name in targets if name not in config.slots]
-    if unknown:
+    available = [name for name in targets if name in config.slots]
+    _warn_unavailable_slots(config, targets)
+    if not available:
         print(
-            f"{RED}Error: unknown slot(s) {unknown}. Available: {list(config.slots)}{RESET}",
+            f"{RED}Error: no requested slots are available. Available: {list(config.slots)}{RESET}",
             file=sys.stderr,
         )
         return 2
 
     if args.list:
-        for name in sorted(targets):
+        for name in sorted(available):
             expectation = _version_expectation(config, name)
             print(f"{name} ({expectation})" if expectation else name)
         return 0
     if args.slots_json:
-        print(json.dumps(targets))
+        print(json.dumps(available))
         return 0
     if args.image_prefix:
         print(config.image_prefix)
@@ -123,6 +124,17 @@ def main(argv: list[str] | None = None) -> int:
             signal.signal(signal.SIGTERM, previous)
 
 
+def _warn_unavailable_slots(config: MatrixConfig, targets: list[str]) -> None:
+    """Name requested slots this package cannot run without masking usable ones."""
+    unavailable = [name for name in targets if name not in config.slots]
+    if unavailable:
+        print(
+            f"{YELLOW}WARNING: skipping {len(unavailable)} requested matrix slot(s) "
+            f"unavailable for this package: {', '.join(unavailable)}{RESET}",
+            file=sys.stderr,
+        )
+
+
 # ── The matrix walk ────────────────────────────────────────────────
 
 
@@ -142,13 +154,15 @@ def _run_matrix(
     """
     started = _monotonic_now()
     try:
-        return _walk_matrix(config, targets, args, results_dir)
+        available = [name for name in targets if name in config.slots]
+        return _walk_matrix(config, available, args, results_dir)
     except KeyboardInterrupt:
         print(f"\n{YELLOW}Interrupted — tearing down.{RESET}", file=sys.stderr)
         return EXIT_INTERRUPTED
     finally:
         if not args.keep_dangling:
             _teardown(config)
+        _warn_unavailable_slots(config, targets)
         # timedelta's H:MM:SS is the same shape pytest prints in the
         # per-slot summaries above -- one clock format per log.
         elapsed = timedelta(seconds=round(_monotonic_now() - started))

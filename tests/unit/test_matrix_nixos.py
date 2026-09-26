@@ -106,3 +106,19 @@ def test_nixos_builder_provides_its_tarball_decompressor(tmp_path: Path, flavor:
     assert builder.count(nixpkgs) == 2
     assert builder.index(xz_build) < builder.index(extraction)
     assert "/tmp/xz" not in runtime
+
+
+@pytest.mark.parametrize("flavor", ["podman", "dbus"])
+def test_nixos_provides_native_dbus_build_and_keyring_libraries(
+    tmp_path: Path, flavor: str
+) -> None:
+    """Complete suites can build D-Bus bindings and load keyutils without FHS links."""
+    config = load_fixture(tmp_path, minimal_yml(flavor=flavor, slot="nixos"))
+    image = runner.render_containerfile(config, "nixos")
+
+    assert "gcc pkg-config meson ninja patchelf dbus" in image
+    assert 'NINJA = "${pkgs.ninja}/bin/ninja";' in image
+    assert 'PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig"' in image
+    assert "[ dbus glib libffi pcre2 ]" in image
+    assert "LD_LIBRARY_PATH = lib.makeLibraryPath (with pkgs; [ dbus glib keyutils ]);" in image
+    assert "ln -s" not in image

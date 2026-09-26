@@ -8,9 +8,9 @@
 #
 # The slot list is derived from the caller's tests/containers/matrix.yml
 # (the single source of truth the local runs use) via
-# `terok-matrix --slots-json`, so nothing per-repo lives here.  The one
-# input is the optional slot subset, threaded through from the caller's
-# workflow_dispatch input; a consumer repo's test-matrix.yml is a thin
+# `terok-matrix --slots-json`, so nothing per-repo lives here. The
+# inputs are an optional slot subset and explicit whole-run krun mode,
+# from workflow_dispatch; a consumer repo's test-matrix.yml is a thin
 # caller carrying only the trigger:
 #
 #   on:
@@ -28,10 +28,6 @@
 #       with:
 #         slots: ${{ inputs.slots }}
 #
-# terok-util itself ships the matrix engine but has no container matrix
-# of its own, so unlike the other fleet-* workflows this one cannot be
-# exercised by the hosting repo's CI via a local `./` call; the consumer
-# sweep validates it.
 
 name: Fleet test matrix (reusable)
 
@@ -42,6 +38,10 @@ on:
         description: "Space-separated slot subset (default = all declared)"
         type: string
         default: ""
+      krun:
+        description: "Run the whole matrix with krun (requires a capable runner)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -57,9 +57,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the matrix engine (terok-util via uv)
-        run: uv sync --locked --no-default-groups --no-install-project
+        run: uv sync --locked --no-default-groups
       # $SLOTS stays unquoted on purpose: the subset is space-separated
-      # and terok-matrix rejects any name not declared in matrix.yml.
+      # and terok-matrix filters unsupported names with a warning.
       - id: gen
         env:
           SLOTS: ${{ inputs.slots }}
@@ -78,8 +78,12 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Install the matrix engine (terok-util via uv)
-        run: uv sync --locked --no-default-groups --no-install-project
+        run: uv sync --locked --no-default-groups
       - name: Run test matrix (${{ matrix.slot }})
         env:
           SLOT: ${{ matrix.slot }}
-        run: uv run --no-sync terok-matrix "$SLOT"
+          KRUN: ${{ inputs.krun }}
+        run: |
+          args=()
+          if [[ "$KRUN" == true ]]; then args+=(--krun); fi
+          uv run --no-sync terok-matrix "${args[@]}" "$SLOT"

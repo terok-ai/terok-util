@@ -10,6 +10,15 @@
   networking.resolvconf.enable = false;
   services.dbus.enable = true;
 
+  # Native Python extensions and ctypes libraries retain their Nix store paths.
+  environment.variables = {
+    # Build isolation's wheel-provided Ninja expects an FHS loader.
+    NINJA = "${pkgs.ninja}/bin/ninja";
+    PKG_CONFIG_PATH = lib.makeSearchPathOutput "dev" "lib/pkgconfig"
+      (with pkgs; [ dbus glib libffi pcre2 ]);
+    LD_LIBRARY_PATH = lib.makeLibraryPath (with pkgs; [ dbus glib keyutils ]);
+  };
+
   users.groups.testrunner.gid = 1000;
   users.users.testrunner = {
     isNormalUser = true;
@@ -48,6 +57,7 @@
   environment.systemPackages = with pkgs; [
     python312 uv gitMinimal openssh curl cacert
     util-linux e2fsprogs
+    gcc pkg-config meson ninja patchelf dbus
 {% if flavor == "podman" %}
     nftables dnsmasq bind
 {% endif %}

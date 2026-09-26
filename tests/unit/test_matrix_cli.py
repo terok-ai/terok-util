@@ -68,10 +68,27 @@ def test_list_respects_an_explicit_selection(
 
 
 def test_unknown_slot_is_a_usage_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """A typo'd slot fails fast instead of running the wrong subset."""
+    """A selection with no usable slots fails without invoking the runner."""
     assert main([*_config_args(tmp_path), "atari800"]) == 2
 
-    assert "unknown slot" in capsys.readouterr().err
+    assert "no requested slots are available" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("query", ["--list", "--slots-json"])
+def test_queries_omit_unavailable_slots_without_polluting_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], query: str
+) -> None:
+    """Queries retain usable requested slots and warn only on stderr."""
+    assert main([*_config_args(tmp_path), query, "alpine", "nixos", "atari800"]) == 0
+
+    captured = capsys.readouterr()
+    if query == "--slots-json":
+        assert json.loads(captured.out) == ["alpine"]
+    else:
+        assert captured.out.strip().startswith("alpine")
+        assert len(captured.out.splitlines()) == 1
+    assert "skipping 2 requested matrix slot(s)" in captured.err
+    assert "nixos, atari800" in captured.err
 
 
 def test_missing_config_is_reported_not_raised(

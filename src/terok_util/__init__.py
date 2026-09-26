@@ -5,7 +5,7 @@
 
 `terok-util` sits at the bottom of the terok dependency chain.  Every
 sibling package depends on it; it depends on nothing else in the
-ecosystem (only stdlib + ``platformdirs`` + ``ruamel.yaml``).
+ecosystem.
 It collects the small set of cross-cutting helpers that would otherwise
 be duplicated — or, worse, quietly diverge — across
 [terok-shield](https://github.com/terok-ai/terok-shield),
@@ -82,6 +82,9 @@ from .fs import ensure_dir, ensure_dir_writable, write_sensitive_file
 # ── Process self-hardening ────────────────────────────────────────
 from .hardening import HardeningReport, LandlockReport, confine_filesystem, harden_self
 
+# ── Host executable discovery ─────────────────────────────────────
+from .host_tools import find_host_tool, host_path, host_tools_source, require_host_tool
+
 # ── Native journald writer (dependency-free) ──────────────────────
 from .journal import JournalWriter, journald_available
 
@@ -108,6 +111,19 @@ from .podman import podman_pull_always_args, podman_userns_args
 # ── Untrusted-string sanitisation ─────────────────────────────────
 from .security import sanitize_tty
 
+# ── Package-owned setup receipts ──────────────────────────────────
+from .setup import (
+    SetupCheck,
+    SetupDowngradeError,
+    SetupReceipt,
+    SetupRequiredError,
+    SetupStatus,
+    python_identity,
+    require_no_downgrade,
+    require_setup,
+    setup_status,
+)
+
 # The round-trip YAML facade is reached as the ``terok_util.yaml`` submodule
 # (``from terok_util.yaml import load, dump``) rather than flattened here.
 # The matrix engine likewise stays a submodule (``terok_util.matrix``) —
@@ -125,6 +141,11 @@ __all__ = [
     "KeyRow",
     "LandlockReport",
     "LazyHandler",
+    "SetupCheck",
+    "SetupDowngradeError",
+    "SetupReceipt",
+    "SetupRequiredError",
+    "SetupStatus",
     "configure",
     "confine_filesystem",
     "deep_merge",
@@ -133,6 +154,9 @@ __all__ = [
     "ensure_dir",
     "ensure_dir_writable",
     "harden_self",
+    "find_host_tool",
+    "host_path",
+    "host_tools_source",
     "config_file_paths",
     "host_uid",
     "namespace_config_dir",
@@ -140,8 +164,13 @@ __all__ = [
     "namespace_state_dir",
     "podman_pull_always_args",
     "podman_userns_args",
+    "python_identity",
     "read_config_section",
     "read_config_top_level",
     "sanitize_tty",
+    "require_host_tool",
+    "require_no_downgrade",
+    "require_setup",
+    "setup_status",
     "write_sensitive_file",
 ]

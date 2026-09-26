@@ -22,11 +22,11 @@ import subprocess  # nosec B404 - fixed-argv podman shellouts
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from shutil import which
 from typing import IO, cast
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
+from terok_util.host_tools import find_host_tool
 from terok_util.security import sanitize_tty
 
 from .catalog import (
@@ -359,8 +359,8 @@ def prune_dangling(config: MatrixConfig) -> int:
         f"label={OWNERSHIP_LABEL}={config.image_prefix}",
     ]
     for wrapper in (["ionice", "-c3"], ["nice", "-n19"]):
-        if which(wrapper[0]):
-            argv = wrapper + argv
+        if binary := find_host_tool(wrapper[0]):
+            argv = [binary, *wrapper[1:], *argv]
     pruned = subprocess.run(argv, check=False, capture_output=True, text=True)  # nosec B603
     if pruned.returncode != 0:
         _warn_prune_failure(pruned.stderr)

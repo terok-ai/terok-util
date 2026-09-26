@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Host-tool lookup from the current PATH, with a standalone-copyable implementation.
+- Package-owned setup receipts, readiness results, and downgrade guards.
+
 Initial extraction from the surrounding terok-`*` packages. First
 release scope (Tier 1 + Tier 2 per
 [terok#111](https://github.com/terok-ai/terok/issues/111)):
@@ -80,4 +83,3 @@ Extracted host BestEffortLogger and the YAML round-trip facade, https://github.c
 ## v0.1.0 — The Emissary
 
 First public PyPi release. For historical pre-releases, see https://github.com/terok-ai/terok-util/releases.
-
