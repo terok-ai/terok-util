@@ -25,6 +25,8 @@ from terok_util.matrix import cli, runner
 from terok_util.matrix.catalog import SLOT_SERVICE, SYSTEM_BUS_SOCKET_UNIT, SYSTEMD_INIT
 from unit.matrix_fixtures import load_fixture, minimal_yml, write_config
 
+pytestmark = pytest.mark.usefixtures("host_podman")
+
 
 class RecordedRun:
     """Stand-in for ``subprocess.run`` that records argv and scripts a result."""
@@ -45,7 +47,7 @@ class RecordedRun:
 
 
 def test_build_image_argv_and_rendered_containerfile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_podman: Path
 ) -> None:
     """The build gets the args, the tag, and the assembled Containerfile."""
     config = load_fixture(tmp_path)
@@ -57,7 +59,7 @@ def test_build_image_argv_and_rendered_containerfile(
     assert runner.build_image(config, "debian13", results, no_cache=True)
 
     (argv,) = recorded.calls
-    assert argv[:4] == ["podman", "build", "--pull=newer", "--no-cache"]
+    assert argv[:4] == [str(host_podman), "build", "--pull=newer", "--no-cache"]
     assert "IMAGE_PREFIX=terok-fixture-test" in argv
     assert "EXTRA_PACKAGES=openssh-client dbus" in argv
     assert "terok-fixture-test:debian13" in argv
@@ -77,7 +79,7 @@ def test_build_image_reports_failure(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 def test_run_slot_writes_scripts_and_reads_the_observed_version(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_podman: Path
 ) -> None:
     """Scripts land in the results dir; the recorded version comes back."""
     config = load_fixture(tmp_path)
@@ -95,7 +97,7 @@ def test_run_slot_writes_scripts_and_reads_the_observed_version(
     assert (results / "outer-debian13.sh").exists()
     assert (results / "inner-debian13.sh").exists()
     (argv,) = recorded.calls
-    assert argv[:2] == ["podman", "run"]
+    assert argv[:2] == [str(host_podman), "run"]
 
 
 def test_run_slot_missing_version_file_reads_as_unknown(
@@ -145,7 +147,7 @@ def test_run_slot_does_not_flag_a_network_line_when_it_passes(
 
 
 def test_prune_targets_only_this_harness_and_niceness_wraps(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_podman: Path
 ) -> None:
     """Prune filters on the ownership label and runs at idle priority."""
     config = load_fixture(tmp_path)
@@ -157,10 +159,13 @@ def test_prune_targets_only_this_harness_and_niceness_wraps(
 
     (argv,) = recorded.calls
     assert argv[:4] == ["/usr/bin/nice", "-n19", "/usr/bin/ionice", "-c3"]
+    assert argv[4] == str(host_podman)
     assert "label=io.terok.matrix-test=terok-fixture-test" in argv
 
 
-def test_prune_without_niceness_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prune_without_niceness_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_podman: Path
+) -> None:
     """No nice/ionice on the host - the prune still runs, unwrapped."""
     config = load_fixture(tmp_path)
     recorded = RecordedRun()
@@ -169,7 +174,7 @@ def test_prune_without_niceness_tools(tmp_path: Path, monkeypatch: pytest.Monkey
 
     assert runner.prune_dangling(config) == 0
 
-    assert recorded.calls[0][0] == "podman"
+    assert recorded.calls[0][0] == str(host_podman)
 
 
 def test_prune_failure_surfaces_stderr_not_an_exception(
@@ -208,7 +213,7 @@ def test_prune_blocked_by_external_container_names_the_cure(
 
 
 def test_sweep_removes_only_this_harness_containers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_podman: Path
 ) -> None:
     """The sweep lists by ownership label and force-removes what it finds."""
     config = load_fixture(tmp_path)
@@ -218,9 +223,9 @@ def test_sweep_removes_only_this_harness_containers(
     assert runner.sweep_containers(config) == 2
 
     listing, removal = recorded.calls
-    assert listing[:3] == ["podman", "ps", "-aq"]
+    assert listing[:3] == [str(host_podman), "ps", "-aq"]
     assert "label=io.terok.matrix-test=terok-fixture-test" in listing
-    assert removal == ["podman", "rm", "-f", "-t", "0", "id1", "id2"]
+    assert removal == [str(host_podman), "rm", "-f", "-t", "0", "id1", "id2"]
 
 
 def test_sweep_with_nothing_leftover_skips_the_removal(
@@ -237,7 +242,7 @@ def test_sweep_with_nothing_leftover_skips_the_removal(
 
 
 def test_external_storage_leftovers_are_named_not_removed(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, host_podman: Path
 ) -> None:
     """Only storage-state externals are reported; nothing gets an rm call."""
     recorded = RecordedRun(
@@ -248,7 +253,7 @@ def test_external_storage_leftovers_are_named_not_removed(
     assert runner.external_storage_leftovers() == ["terok-util-buildah"]
 
     (listing,) = recorded.calls
-    assert listing[:2] == ["podman", "ps"]
+    assert listing[:2] == [str(host_podman), "ps"]
     assert "--external" in listing
 
 
@@ -852,7 +857,10 @@ def _booted_slot(
 
 
 def test_booted_slot_is_one_attached_run_with_its_units_in_place(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    host_podman: Path,
 ) -> None:
     """An image probe, then one streamed ``podman run`` of systemd: no exec, no stop."""
     config, results, probe, popen = _booted_slot(tmp_path, monkeypatch)
@@ -862,7 +870,7 @@ def test_booted_slot_is_one_attached_run_with_its_units_in_place(
     assert result.passed
     assert result.observed == "5.4.2"
     (probed,) = probe.calls
-    assert probed[:4] == ["podman", "run", "--rm", "--network=none"]
+    assert probed[:4] == [str(host_podman), "run", "--rm", "--network=none"]
     # systemd, and the system bus its user manager cannot start without
     assert probed[-6:] == [
         f"{config.image_prefix}:debian13",

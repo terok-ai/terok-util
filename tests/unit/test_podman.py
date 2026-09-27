@@ -6,11 +6,14 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from terok_util.podman import _podman_version, podman_pull_always_args, podman_userns_args
+from terok_util.podman import _version_for_executable, podman_pull_always_args, podman_userns_args
+
+pytestmark = pytest.mark.usefixtures("host_podman")
 
 KEEP_ID_ARGS = ["--userns=keep-id:uid=1000,gid=1000"]
 
@@ -23,9 +26,9 @@ EXPLICIT_MAP_ARGS = [
 @pytest.fixture(autouse=True)
 def _fresh_version_probe():
     """Reset the cached podman version around every test."""
-    _podman_version.cache_clear()
+    _version_for_executable.cache_clear()
     yield
-    _podman_version.cache_clear()
+    _version_for_executable.cache_clear()
 
 
 def _probe_result(version: str) -> subprocess.CompletedProcess[str]:
@@ -76,6 +79,33 @@ class TestPodmanUsernsArgs:
         """The version probe result is cached across calls."""
         podman_userns_args()
         podman_userns_args()
+        assert run.call_count == 1
+
+    @patch("terok_util.podman.subprocess.run", return_value=_probe_result("4.9.3"))
+    @patch("terok_util.podman.os.geteuid", return_value=1000)
+    def test_probe_uses_current_host_path(self, _euid, run, host_podman: Path) -> None:
+        """The version probe executes the same absolute tool as normal launches."""
+        podman_userns_args()
+        assert run.call_args.args[0][0] == str(host_podman)
+
+    @patch("terok_util.podman.subprocess.run", return_value=_probe_result("3.4.4"))
+    @patch("terok_util.podman.os.geteuid", return_value=1000)
+    def test_changed_path_rechecks_version(self, _euid, run, monkeypatch, host_podman) -> None:
+        """A cached version never bypasses changed executable-search policy."""
+        assert podman_userns_args() == EXPLICIT_MAP_ARGS
+        monkeypatch.chdir(host_podman.parent)
+        monkeypatch.setenv("PATH", ".:")
+        assert podman_userns_args() == KEEP_ID_ARGS
+        assert run.call_count == 1
+
+    @patch("terok_util.podman.subprocess.run", return_value=_probe_result("3.4.4"))
+    @patch("terok_util.podman.os.geteuid", return_value=1000)
+    def test_new_tool_rechecks_version(self, _euid, run, host_podman) -> None:
+        """A tool installed after a missing-tool probe is discovered on the same PATH."""
+        host_podman.unlink()
+        assert podman_userns_args() == KEEP_ID_ARGS
+        host_podman.touch(mode=0o700)
+        assert podman_userns_args() == EXPLICIT_MAP_ARGS
         assert run.call_count == 1
 
 

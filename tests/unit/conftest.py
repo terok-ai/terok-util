@@ -13,6 +13,8 @@ with no overrides) never land on the operator's real
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 # Terok-specific env vars that override path resolution.  The autouse
@@ -27,6 +29,17 @@ _TEROK_PATH_OVERRIDE_ENV_VARS = (
     "TEROK_ROOT",
     "TEROK_CONFIG_FILE",
 )
+
+
+@pytest.fixture
+def host_podman(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Put a discoverable Podman fixture on PATH; subprocesses remain mocked."""
+    directory = tmp_path / "host-bin"
+    directory.mkdir()
+    binary = directory / "podman"
+    binary.touch(mode=0o700)
+    monkeypatch.setenv("PATH", str(directory))
+    return binary
 
 
 @pytest.fixture(autouse=True)

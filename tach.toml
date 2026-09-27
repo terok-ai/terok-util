@@ -79,4 +79,4 @@ depends_on = []
 [[modules]]
 path = "terok_util.podman"
 layer = "foundation"
-depends_on = []
+depends_on = ["terok_util.host_tools"]

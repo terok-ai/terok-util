@@ -14,6 +14,8 @@ import functools
 import os
 import subprocess  # nosec B404
 
+from .host_tools import require_host_tool
+
 _KEEP_ID_UID_MIN = (4, 3)
 """First podman release that understands ``keep-id:uid=…`` customization."""
 
@@ -65,26 +67,31 @@ def podman_pull_always_args() -> list[str]:
     return ["--pull-always"]
 
 
-@functools.cache
 def _podman_version() -> tuple[int, int]:
-    """Podman client version as ``(major, minor)``.
+    """Version of the currently selected host Podman as ``(major, minor)``.
 
     Any probe failure — podman missing, unresponsive, or an unparseable
     version string — reports the modern baseline, so the caller's own
     podman invocation (not this probe) produces the user-facing error.
     """
     try:
-        out = subprocess.run(  # nosec B603 B607
-            ["podman", "version", "--format", "{{.Client.Version}}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        ).stdout
-        major, minor = out.strip().split(".")[:2]
-        return (int(major), int(minor))
+        return _version_for_executable(require_host_tool("podman"))
     except (OSError, subprocess.SubprocessError, ValueError):
         return _KEEP_ID_UID_MIN
+
+
+@functools.cache
+def _version_for_executable(binary: str) -> tuple[int, int]:
+    """Cache the version probe, not the host executable lookup."""
+    out = subprocess.run(  # nosec B603
+        [binary, "version", "--format", "{{.Client.Version}}"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    ).stdout
+    major, minor = out.strip().split(".")[:2]
+    return (int(major), int(minor))
 
 
 __all__ = ["podman_pull_always_args", "podman_userns_args"]

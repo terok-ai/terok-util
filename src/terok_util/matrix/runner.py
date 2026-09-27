@@ -26,7 +26,7 @@ from typing import IO, cast
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
-from terok_util.host_tools import find_host_tool
+from terok_util.host_tools import find_host_tool, require_host_tool
 from terok_util.security import sanitize_tty
 
 from .catalog import (
@@ -125,7 +125,7 @@ def build_image(
     containerfile = results_dir / f"Containerfile.{slot_name}"
     containerfile.write_text(render_containerfile(config, slot_name), encoding="utf-8")
     argv = [
-        "podman",
+        require_host_tool("podman"),
         "build",
         # Base tags are moving targets (quay.io/podman/stable:latest,
         # distro :latest bases) but a cached FROM never re-checks the
@@ -191,9 +191,15 @@ def _stream(
     (``None`` when none did).
     """
     net_hint: str | None = None
-    with subprocess.Popen(  # nosec B603
-        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
-    ) as proc:
+    with (
+        subprocess.Popen(  # nosec B603
+            [require_host_tool(argv[0]), *argv[1:]],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+        ) as proc
+    ):
         stdout = cast(IO[str], proc.stdout)  # guaranteed non-None by stdout=PIPE
         for raw in stdout:
             line = strip.sub("", raw, count=1) if strip else raw
@@ -231,9 +237,9 @@ def _boots_systemd(config: MatrixConfig, slot_name: str) -> bool:
         return False
     if SLOTS[slot_name].requires_boot:
         return True
-    probe = subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
+    probe = subprocess.run(  # nosec B603 - fixed argv, resolved host executable
         [
-            "podman",
+            require_host_tool("podman"),
             "run",
             "--rm",
             "--network=none",
@@ -324,8 +330,14 @@ def sweep_containers(config: MatrixConfig) -> int:
     Returns:
         The number of containers removed.
     """
-    listing = subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
-        ["podman", "ps", "-aq", "--filter", f"label={OWNERSHIP_LABEL}={config.image_prefix}"],
+    listing = subprocess.run(  # nosec B603 - fixed argv, resolved host executable
+        [
+            require_host_tool("podman"),
+            "ps",
+            "-aq",
+            "--filter",
+            f"label={OWNERSHIP_LABEL}={config.image_prefix}",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -333,8 +345,8 @@ def sweep_containers(config: MatrixConfig) -> int:
     container_ids = listing.stdout.split()
     if not container_ids:
         return 0
-    subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
-        ["podman", "rm", "-f", "-t", _REMOVAL_GRACE_SECONDS, *container_ids],
+    subprocess.run(  # nosec B603 - fixed argv, resolved host executable
+        [require_host_tool("podman"), "rm", "-f", "-t", _REMOVAL_GRACE_SECONDS, *container_ids],
         check=False,
         capture_output=True,
         text=True,
@@ -351,7 +363,7 @@ def prune_dangling(config: MatrixConfig) -> int:
     of pruned image records.
     """
     argv = [
-        "podman",
+        require_host_tool("podman"),
         "image",
         "prune",
         "-f",
@@ -375,8 +387,8 @@ def external_storage_leftovers() -> list[str]:
     another process, so recovery is superbuild's job; the CLI only names
     them.  Returns the container names (or ids, for nameless entries).
     """
-    listing = subprocess.run(  # nosec B603 B607 - fixed argv, podman from PATH by design
-        ["podman", "ps", "-a", "--external", "--format", _EXTERNAL_PS_FORMAT],
+    listing = subprocess.run(  # nosec B603 - fixed argv, resolved host executable
+        [require_host_tool("podman"), "ps", "-a", "--external", "--format", _EXTERNAL_PS_FORMAT],
         check=False,
         capture_output=True,
         text=True,
