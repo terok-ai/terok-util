@@ -3,9 +3,7 @@
 #
 # Multi-distro integration test matrix on the self-hosted runner.
 # Thin caller: the jobs live in this repo's own reusable
-# fleet-test-matrix.yml (pinned to a released tag, like every other
-# consumer — the matrix engine tests itself with a shipped engine, not
-# with the working tree); the slot list is derived from
+# fleet-test-matrix.yml; the slot list is derived from
 # tests/containers/matrix.yml via `terok-matrix --slots-json`.
 name: Test Matrix
 
@@ -16,12 +14,17 @@ on:
         description: Space-separated slot subset (default = all declared)
         required: false
         default: ""
+      krun:
+        description: Run the whole matrix with krun (requires a capable runner)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   matrix:
-    uses: terok-ai/terok-util/.github/workflows/fleet-test-matrix.yml@v0.3.1
+    uses: ./.github/workflows/fleet-test-matrix.yml
     with:
       slots: ${{ inputs.slots }}
+      krun: ${{ inputs.krun }}

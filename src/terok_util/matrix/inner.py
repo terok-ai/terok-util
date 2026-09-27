@@ -59,7 +59,7 @@ def outer_script(config: MatrixConfig, slot_name: str, *, boots_systemd: bool = 
     container command; the flow is otherwise the same.
     """
     spec = SLOTS[slot_name]
-    lines = ["#!/bin/bash", "set -e -o pipefail", ""]
+    lines = [f"#!{spec.bash_path}", "set -e -o pipefail", ""]
     if config.krun:
         lines += _krun_dev_std_symlinks()
         if spec.kind is SlotKind.CONTAINER:
@@ -86,7 +86,7 @@ def outer_script(config: MatrixConfig, slot_name: str, *, boots_systemd: bool = 
 def inner_script(config: MatrixConfig, slot_name: str, scope: str = "all") -> str:
     """Test-user-side flow: env contract, venv + deps, configured phases."""
     spec = SLOTS[slot_name]
-    lines = ["#!/bin/bash", "set -e -o pipefail", ""]
+    lines = [f"#!{spec.bash_path}", "set -e -o pipefail", ""]
     if spec.kind is SlotKind.CONTAINER:
         lines += ["export XDG_RUNTIME_DIR=/run/user/$(id -u)"]
     if config.krun and spec.kind is SlotKind.CONTAINER:
@@ -131,6 +131,8 @@ def boot_units(slot_name: str) -> dict[str, str]:
     libkrun's own init ends it.  A boot that does not reach
     ``multi-user.target`` in time ends the VM the same way.
     """
+    shell = SLOTS[slot_name].bash_path
+    login = " -l" if SLOTS[slot_name].requires_boot else ""
     service = [
         "[Unit]",
         f"Description=terok matrix: the {slot_name} slot's outer script",
@@ -142,9 +144,9 @@ def boot_units(slot_name: str) -> dict[str, str]:
         "Type=oneshot",
         # A pipe, not the console, is the script's stdout, as in the plain shape:
         # nothing draws progress bars for a terminal nobody watches.
-        "ExecStart=/bin/bash -o pipefail -c"
-        f' "/bin/bash {RESULTS_MOUNT}/outer-{slot_name}.sh 2>&1 | cat"',
-        f"ExecStopPost=/bin/sh -c 'echo \"$$EXIT_STATUS\" > {RESULTS_MOUNT}/{slot_name}.exit'",
+        f"ExecStart={shell}{login} -o pipefail -c"
+        f' "{shell} {RESULTS_MOUNT}/outer-{slot_name}.sh 2>&1 | cat"',
+        f"ExecStopPost={shell} -c 'echo \"$$EXIT_STATUS\" > {RESULTS_MOUNT}/{slot_name}.exit'",
         "StandardOutput=tty",
         "TTYPath=/dev/console",
     ]

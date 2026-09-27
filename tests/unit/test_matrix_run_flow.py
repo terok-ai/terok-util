@@ -23,7 +23,7 @@ import pytest
 
 from terok_util.matrix import cli, runner
 from terok_util.matrix.catalog import SLOT_SERVICE, SYSTEM_BUS_SOCKET_UNIT, SYSTEMD_INIT
-from unit.matrix_fixtures import load_fixture, write_config
+from unit.matrix_fixtures import load_fixture, minimal_yml, write_config
 
 
 class RecordedRun:
@@ -151,12 +151,12 @@ def test_prune_targets_only_this_harness_and_niceness_wraps(
     config = load_fixture(tmp_path)
     recorded = RecordedRun(stdout="id1\nid2\n")
     monkeypatch.setattr(runner.subprocess, "run", recorded)
-    monkeypatch.setattr(runner, "which", lambda cmd: f"/usr/bin/{cmd}")
+    monkeypatch.setattr(runner, "find_host_tool", lambda cmd: f"/usr/bin/{cmd}")
 
     assert runner.prune_dangling(config) == 2
 
     (argv,) = recorded.calls
-    assert argv[:4] == ["nice", "-n19", "ionice", "-c3"]
+    assert argv[:4] == ["/usr/bin/nice", "-n19", "/usr/bin/ionice", "-c3"]
     assert "label=io.terok.matrix-test=terok-fixture-test" in argv
 
 
@@ -165,7 +165,7 @@ def test_prune_without_niceness_tools(tmp_path: Path, monkeypatch: pytest.Monkey
     config = load_fixture(tmp_path)
     recorded = RecordedRun()
     monkeypatch.setattr(runner.subprocess, "run", recorded)
-    monkeypatch.setattr(runner, "which", lambda cmd: None)
+    monkeypatch.setattr(runner, "find_host_tool", lambda cmd: None)
 
     assert runner.prune_dangling(config) == 0
 
@@ -179,7 +179,7 @@ def test_prune_failure_surfaces_stderr_not_an_exception(
     config = load_fixture(tmp_path)
     recorded = RecordedRun(returncode=125, stderr="Error: layer store exploded\n")
     monkeypatch.setattr(runner.subprocess, "run", recorded)
-    monkeypatch.setattr(runner, "which", lambda cmd: None)
+    monkeypatch.setattr(runner, "find_host_tool", lambda cmd: None)
 
     assert runner.prune_dangling(config) == 0
 
@@ -195,7 +195,7 @@ def test_prune_blocked_by_external_container_names_the_cure(
     config = load_fixture(tmp_path)
     stderr = "Error: image used by 1234abcd: image is in use by a container: consider force removal"
     monkeypatch.setattr(runner.subprocess, "run", RecordedRun(returncode=125, stderr=stderr))
-    monkeypatch.setattr(runner, "which", lambda cmd: None)
+    monkeypatch.setattr(runner, "find_host_tool", lambda cmd: None)
 
     assert runner.prune_dangling(config) == 0
 
@@ -317,6 +317,66 @@ def test_walk_passes_and_prunes(
     assert "===== Matrix Summary =====" in out
     assert out.count("PASS") >= 4
     assert "pruned 3 image record(s)" in out
+
+
+@pytest.mark.parametrize("build_only", [False, True])
+def test_requested_unavailable_slots_do_not_block_available_slots(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    build_only: bool,
+) -> None:
+    """A cross-package selection runs its available subset and warns at both ends."""
+    config_path = write_config(tmp_path, minimal_yml(slot="fedora44"))
+    monkeypatch.setattr(cli.sys, "stderr", cli.sys.stdout)
+    args = ["--config", str(config_path), "fedora44", "nix", "nixos", "atari800"]
+    if build_only:
+        args.append("--build-only")
+
+    assert cli.main(args) == 0
+
+    assert stubbed_host["built"] == ["fedora44"]
+    assert stubbed_host["ran"] == ([] if build_only else ["fedora44"])
+    output = capsys.readouterr().out
+    warning = (
+        "WARNING: skipping 3 requested matrix slot(s) unavailable for this package: "
+        "nix, nixos, atari800"
+    )
+    assert output.count(warning) == 2
+    assert output.index(warning) < output.index("==> Building")
+    assert output.rindex(warning) > output.index("pruned")
+    assert output.rindex(warning) < output.index("Matrix wall time")
+
+
+@pytest.mark.parametrize("requested", [("nixos",), ("atari800",), ("nixos", "atari800")])
+def test_unavailable_only_selection_does_not_touch_podman(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    capsys: pytest.CaptureFixture[str],
+    requested: tuple[str, ...],
+) -> None:
+    """Nothing usable is a usage error, not a successful empty matrix."""
+    assert cli.main(_args(tmp_path, *requested)) == 2
+
+    assert stubbed_host["built"] == stubbed_host["ran"] == []
+    assert stubbed_host["swept"] == stubbed_host["pruned"] == 0
+    assert "no requested slots are available" in capsys.readouterr().err
+
+
+def test_unavailable_slot_warning_closes_an_interrupted_run(
+    tmp_path: Path,
+    stubbed_host: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An interruption does not hide the omitted requested slots."""
+    monkeypatch.setattr(cli, "run_slot", _raise_interrupt)
+
+    assert cli.main(_args(tmp_path, "debian13", "nixos")) == 130
+
+    assert stubbed_host["built"] == ["debian13"]
+    assert capsys.readouterr().err.count("skipping 1 requested matrix slot(s)") == 2
 
 
 def test_walk_reports_failures_with_exit_1(

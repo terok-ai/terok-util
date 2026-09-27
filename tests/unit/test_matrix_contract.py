@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 
 import pytest
 
@@ -60,12 +61,20 @@ def test_unknown_capability_is_rejected(
     assert "unknown" in message and "warpdrive" in message
 
 
-def test_binary_on_path_searches_sbin_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A PATH without sbin still finds sbin-installed daemons; junk does not resolve."""
-    monkeypatch.setenv("PATH", "/usr/bin:/bin")
-
-    assert binary_on_path("sh")
-    assert not binary_on_path("no-such-binary-anywhere")
+def test_binary_on_path_observes_launch_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probes neither invent search directories nor accept cwd-based lookup."""
+    binary = tmp_path / "fixture-tool"
+    binary.write_text("fixture")
+    binary.chmod(0o700)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", ".")
+    assert not binary_on_path(binary.name)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert binary_on_path(binary.name)
+    monkeypatch.setenv("PATH", "")
+    assert not binary_on_path(binary.name)
 
 
 @pytest.mark.needs_loopback  # binds a real loopback listener; krun's TSI refuses it

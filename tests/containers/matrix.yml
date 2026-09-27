@@ -37,6 +37,7 @@ slots:
   mageia:
   manjaro:
   nix:
+  nixos:
 
 phases:
   - name: unit tests

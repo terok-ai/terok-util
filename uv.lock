@@ -1438,6 +1438,7 @@ name = "terok-util"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },
+    { name = "packaging" },
     { name = "platformdirs" },
     { name = "ruamel-yaml" },
 ]
@@ -1463,6 +1464,7 @@ docs = [
     { name = "properdocs" },
 ]
 test = [
+    { name = "coverage" },
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
@@ -1470,6 +1472,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "jinja2", specifier = "~=3.1" },
+    { name = "packaging", specifier = "~=26.0" },
     { name = "platformdirs", specifier = "~=4.11" },
     { name = "ruamel-yaml", specifier = "==0.19.1" },
 ]
@@ -1495,6 +1498,7 @@ docs = [
     { name = "properdocs", specifier = ">=1.6.7" },
 ]
 test = [
+    { name = "coverage", specifier = ">=7.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=4.0" },
 ]

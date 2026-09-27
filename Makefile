@@ -35,7 +35,10 @@ test-fast:
 # Run tests with coverage
 test-unit:
 	mkdir -p $(REPORTS_DIR)
-	uv run pytest tests/unit/ --cov=terok_util --cov-report=term-missing --cov-report=xml:$(COVERAGE_XML) --cov-report=json:$(COVERAGE_JSON) --junitxml=$(UNIT_JUNIT_XML) -o junit_family=legacy
+	uv run coverage run --source=terok_util -m pytest tests/unit/ --junitxml=$(UNIT_JUNIT_XML) -o junit_family=legacy
+	uv run coverage report -m
+	uv run coverage xml -o $(COVERAGE_XML)
+	uv run coverage json -o $(COVERAGE_JSON)
 
 # Deep-reach integration tests — kernel surfaces, real uids, a fresh
 # interpreter.  No podman, no network: they run anywhere pytest does,
