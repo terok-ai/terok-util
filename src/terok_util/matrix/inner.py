@@ -49,6 +49,9 @@ from .config import MatrixConfig
 #: Uid baked into every slot image for the non-root test user.
 TEST_UID = 1000
 
+#: Distro images install admin tools outside some non-root login PATHs.
+_ADMIN_TOOL_PATH = "/usr/local/sbin:/usr/sbin:/sbin"
+
 
 def outer_script(config: MatrixConfig, slot_name: str, *, boots_systemd: bool = False) -> str:
     """Root-side container entry: workspace prep, init-system proof, user drop.
@@ -88,7 +91,10 @@ def inner_script(config: MatrixConfig, slot_name: str, scope: str = "all") -> st
     spec = SLOTS[slot_name]
     lines = [f"#!{spec.bash_path}", "set -e -o pipefail", ""]
     if spec.kind is SlotKind.CONTAINER:
-        lines += ["export XDG_RUNTIME_DIR=/run/user/$(id -u)"]
+        lines += [
+            f'export PATH="${{PATH:+$PATH:}}{_ADMIN_TOOL_PATH}"',
+            "export XDG_RUNTIME_DIR=/run/user/$(id -u)",
+        ]
     if config.krun and spec.kind is SlotKind.CONTAINER:
         lines += _krun_tmpdir_export()
     lines += _env_contract(config, slot_name)

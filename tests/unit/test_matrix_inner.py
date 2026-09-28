@@ -5,8 +5,15 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
+import pytest
+
+from terok_util import require_host_tool
+from terok_util.matrix import inner as matrix_inner
+from terok_util.matrix.catalog import WORKSPACE_DIR
 from terok_util.matrix.inner import inner_script, outer_script
 from unit.matrix_fixtures import load_fixture, minimal_yml
 
@@ -56,6 +63,44 @@ def test_inner_exports_the_capability_contract(tmp_path: Path) -> None:
     assert inner.index("stack-under-test setup") < inner.index("${TEROK_EXPECT},hooks")
 
 
+@pytest.mark.parametrize("slot", ["debian12", "debian13", "alpine", "nixos"])
+def test_inner_finds_admin_tools_without_overriding_user_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, slot: str
+) -> None:
+    """Login PATH gains image admin tools while retaining user/profile precedence."""
+    admin, profile = tmp_path / "sbin", tmp_path / "profile" / "bin"
+    for directory, names in ((admin, ("nft", "dnsmasq")), (profile, ("dnsmasq",))):
+        directory.mkdir(parents=True)
+        for name in names:
+            tool = directory / name
+            tool.touch()
+            tool.chmod(0o755)
+    monkeypatch.setattr(matrix_inner, "_ADMIN_TOOL_PATH", str(admin))
+    inherited_path = str(profile)
+    inner = inner_script(load_fixture(tmp_path, minimal_yml(slot=slot)), slot)
+    # Execute only the environment prelude, never container or venv setup.
+    prelude = (
+        f"id() {{ printf '%s\\n' {matrix_inner.TEST_UID}; }}\n"
+        + inner.split(f"\ncd {WORKSPACE_DIR}", 1)[0]
+    )
+    result = subprocess.run(
+        [
+            require_host_tool("bash"),
+            "-c",
+            prelude + '\ncommand -v nft\ncommand -v dnsmasq\nprintf "%s\\n" "$PATH"',
+        ],
+        env={"PATH": inherited_path},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.splitlines() == [
+        str(admin / "nft"),
+        str(profile / "dnsmasq"),
+        os.pathsep.join((inherited_path, str(admin))),
+    ]
+
+
 def test_inner_walks_phases_in_order_and_aggregates_pytest_failures(tmp_path: Path) -> None:
     """Pytest phases keep going on failure; command phases stay bare (set -e)."""
     inner = inner_script(load_fixture(tmp_path), "debian13")
@@ -103,6 +148,7 @@ def test_inner_nix_slot_reports_python_with_its_declared_contract(tmp_path: Path
     assert "export TEROK_MATRIX=1" in inner
     assert "TEROK_EXPECT" not in inner
     assert "XDG_RUNTIME_DIR" not in inner
+    assert "export PATH=" not in inner
     assert "uv sync --locked --active --no-default-groups --group test --group docs" in inner
 
 
