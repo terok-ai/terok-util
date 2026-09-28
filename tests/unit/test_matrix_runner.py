@@ -56,6 +56,15 @@ def test_shared_blocks_render_with_their_slot_knobs(tmp_path: Path) -> None:
     assert "UV_PYTHON_INSTALL_DIR=/opt/uv/python" in mageia
 
 
+def test_debian12_installs_podman_init_helper(tmp_path: Path) -> None:
+    """The init helper is required even when apt recommendations are disabled."""
+    config = load_fixture(tmp_path, minimal_yml(slot="debian12"))
+    rendered = render_containerfile(config, "debian12")
+    packages = rendered.partition("apt-get install")[2].partition("&&")[0].split()
+
+    assert "catatonit" in packages
+
+
 def test_missing_template_error_is_catchable_as_oserror(tmp_path: Path) -> None:
     """TemplateNotFound must stay in the OSError family cli.main catches.
 
