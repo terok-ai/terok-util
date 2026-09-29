@@ -42,6 +42,7 @@ def test_shared_blocks_render_with_their_slot_knobs(tmp_path: Path) -> None:
     # Every slot runs its distro's default rootless backend, and musl
     # images need an explicit bash login shell.
     assert "default_rootless_network_cmd" not in alpine
+    assert "slirp4netns" not in alpine
     assert "useradd -m -s /bin/bash testrunner" in alpine
     assert "git-daemon" in alpine  # git-http-backend, for the sandbox's git gate
     assert f"ghcr.io/astral-sh/uv:{UV_IMAGE_TAG}" in alpine
