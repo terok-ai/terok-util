@@ -105,3 +105,19 @@ def test_build_only_does_not_claim_tests_passed(engine):
     args, path = engine
     assert cli.main([*args, "--build-only"]) == 0
     assert {slot["state"] for slot in json.loads(path.read_text())["slots"].values()} == {"built"}
+
+
+def test_teardown_failure_does_not_publish_a_successful_matrix(engine, monkeypatch):
+    """Keep passing slot verdicts, but report a host cleanup error for the matrix."""
+    args, path = engine
+
+    def failed_teardown(config):
+        raise OSError("container cleanup failed")
+
+    monkeypatch.setattr(cli, "_teardown", failed_teardown)
+    assert cli.main([*args, "debian13"]) == 2
+    report = json.loads(path.read_text())
+    assert report["state"] == "error"
+    assert report["exit_code"] == 2
+    assert report["error"] == "container cleanup failed"
+    assert report["slots"]["debian13"]["state"] == "passed"
