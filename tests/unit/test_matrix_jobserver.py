@@ -220,3 +220,29 @@ def test_a_sigterm_mid_walk_starts_no_more_slots(
     assert rc == cli.EXIT_INTERRUPTED
     assert len(started) == 1
     assert signal.getsignal(signal.SIGTERM) is previous
+
+
+def test_one_cancelled_wait_does_not_close_the_shared_jobserver(server: tuple[Path, int]) -> None:
+    """A queued run may leave while other runs continue using the same worker budget."""
+    fifo, fd = server
+    client = Jobserver.from_environ({"MAKEFLAGS": f"--jobserver-auth=fifo:{fifo}"})
+    assert client is not None
+    cancelled = threading.Event()
+    gave_up = threading.Event()
+
+    def waiting_slot() -> None:
+        try:
+            with client.slot(implicit=False, cancelled=cancelled):
+                pytest.fail("no token was available")
+        except InterruptedError:
+            gave_up.set()
+
+    waiter = threading.Thread(target=waiting_slot, daemon=True)
+    waiter.start()
+    cancelled.set()
+    assert gave_up.wait(2)
+    waiter.join()
+    os.write(fd, b"+")
+    with client.slot(implicit=False):
+        assert _tokens(fd) == b""
+    assert _tokens(fd) == b"+"

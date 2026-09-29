@@ -94,7 +94,9 @@ class Jobserver:
         return cls(own_read_fd, write_fd, inherited_fds=(read_fd, write_fd))
 
     @contextmanager
-    def slot(self, *, implicit: bool = True) -> Iterator[None]:
+    def slot(
+        self, *, implicit: bool = True, cancelled: threading.Event | None = None
+    ) -> Iterator[None]:
         """Hold one job slot: the implicit one when it is free, else a token from the server.
 
         *implicit* false takes tokens only.  It is for a launcher whose own slot
@@ -105,12 +107,14 @@ class Jobserver:
         frees.  All of a run's slots may be waiting at once, and without this
         none of them would come back for the implicit one.
 
+        A caller may cancel its own wait without closing the shared jobserver.
+
         Raises:
-            InterruptedError: The jobserver was closed before a slot was free.
+            InterruptedError: The jobserver closed or the caller cancelled before admission.
         """
         while True:
-            if self._closed.is_set():
-                raise InterruptedError("the jobserver closed before a job slot was free")
+            if self._closed.is_set() or (cancelled is not None and cancelled.is_set()):
+                raise InterruptedError("the job wait ended before a slot was free")
             if implicit and self._implicit.acquire(blocking=False):
                 try:
                     yield
