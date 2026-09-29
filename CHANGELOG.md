@@ -40,6 +40,18 @@ release scope (Tier 1 + Tier 2 per
   that lived in `terok`).
 - `podman` — `podman_userns_args`. Rootless `--userns=keep-id`
   builder.
+## v0.4.0 — At Your Service
+
+## What's Changed
+* feat: shared setup receipts and host tool lookup by @sliwowitz in https://github.com/terok-ai/terok-util/pull/128
+* fix: complete host tool lookup in matrix and version probes by @sliwowitz in https://github.com/terok-ai/terok-util/pull/129
+* fix: restore admin tool lookup in matrix login sessions by @sliwowitz in https://github.com/terok-ai/terok-util/pull/131
+* ci: bump the external-actions group with 2 updates by @dependabot[bot] in https://github.com/terok-ai/terok-util/pull/130
+* fix: install Debian 12 matrix init helper by @sliwowitz in https://github.com/terok-ai/terok-util/pull/132
+* test: drop obsolete slirp4netns from Alpine matrix image by @sliwowitz in https://github.com/terok-ai/terok-util/pull/134
+
+**Full Changelog**: https://github.com/terok-ai/terok-util/compare/v0.3.1...v0.4.0
+
 ## v0.3.1 — Past Prologue
 
 ## What's Changed
