@@ -38,6 +38,7 @@ from pathlib import Path
 from .catalog import SLOTS, SlotKind
 from .config import MatrixConfig, MatrixConfigError, load_config
 from .jobserver import Jobserver
+from .report import MatrixReport
 from .runner import (
     SlotResult,
     build_image,
@@ -153,15 +154,30 @@ def _run_matrix(
     the operator how long it lived.
     """
     started = _monotonic_now()
+    report = MatrixReport(args.report, targets)
+    exit_code, error = 2, ""
     try:
         available = [name for name in targets if name in config.slots]
-        return _walk_matrix(config, available, args, results_dir)
+        for name in set(targets) - set(available):
+            report.update(name, "skipped", reason="unavailable for this repository")
+        exit_code = _walk_matrix(config, available, args, results_dir, report)
+        return exit_code
     except KeyboardInterrupt:
         print(f"\n{YELLOW}Interrupted — tearing down.{RESET}", file=sys.stderr)
-        return EXIT_INTERRUPTED
+        exit_code = EXIT_INTERRUPTED
+        return exit_code
+    except Exception as exc:
+        error = str(exc)
+        raise
     finally:
-        if not args.keep_dangling:
-            _teardown(config)
+        try:
+            if not args.keep_dangling:
+                _teardown(config)
+        except OSError as exc:
+            exit_code, error = 2, str(exc)
+            raise
+        finally:
+            report.finish(exit_code, error)
         _warn_unavailable_slots(config, targets)
         # timedelta's H:MM:SS is the same shape pytest prints in the
         # per-slot summaries above -- one clock format per log.
@@ -200,10 +216,16 @@ def _teardown(config: MatrixConfig) -> None:
 
 
 def _walk_matrix(
-    config: MatrixConfig, targets: list[str], args: argparse.Namespace, results_dir: Path
+    config: MatrixConfig,
+    targets: list[str],
+    args: argparse.Namespace,
+    results_dir: Path,
+    report: MatrixReport,
 ) -> int:
     """Build all images, run all runnable slots, summarise."""
-    build_failed = _build_images(config, targets, results_dir, no_cache=args.no_cache)
+    build_failed = _build_images(
+        config, targets, results_dir, no_cache=args.no_cache, report=report
+    )
     if args.build_only:
         print(f"{GREEN}Images built.{RESET} Run without --build-only to run tests.")
         return 1 if build_failed else 0
@@ -217,6 +239,7 @@ def _walk_matrix(
             print(
                 f"{YELLOW}==> Skipping {BOLD}{name}{YELLOW} on {platform.machine()}: {reason}{RESET}"
             )
+            report.update(name, "skipped", reason=reason)
             skipped.append(name)
             continue
         if name in build_failed:
@@ -229,12 +252,12 @@ def _walk_matrix(
     # Under a make jobserver its tokens set the pace; an explicit --jobs still caps it.
     jobs = args.jobs or (len(runnable) if jobserver else 1)
     if jobs > 1 and len(runnable) > 1:
-        results = _run_slots_tagged(config, runnable, args, results_dir, jobs, jobserver)
+        results = _run_slots_tagged(config, runnable, args, results_dir, jobs, jobserver, report)
     else:
         results = {}
         for name in runnable:
             _print_slot_heading(config, name, args.scope)
-            results[name] = run_slot(config, name, results_dir, scope=args.scope)
+            results[name] = _run_reported_slot(config, name, results_dir, args.scope, report)
             _print_verdict(config, name, results[name])
     for name in runnable:
         (passed if results[name].passed else failed).append(name)
@@ -245,20 +268,29 @@ def _walk_matrix(
 
 
 def _build_images(
-    config: MatrixConfig, targets: list[str], results_dir: Path, no_cache: bool
+    config: MatrixConfig,
+    targets: list[str],
+    results_dir: Path,
+    no_cache: bool,
+    report: MatrixReport,
 ) -> set[str]:
     """Build every runnable target; return the ones whose build failed."""
     build_failed = set()
     for name in targets:
-        if _skip_reason(config, name):
+        if reason := _skip_reason(config, name):
+            report.update(name, "skipped", reason=reason)
             continue
         print(f"{CYAN}==> Building {BOLD}{config.image_prefix}:{name}{RESET}")
+        report.update(name, "building")
         if not build_image(config, name, results_dir, no_cache=no_cache):
             print(
                 f"{RED}==> Build FAILED for {BOLD}{name}{RED} - recording and continuing{RESET}",
                 file=sys.stderr,
             )
             build_failed.add(name)
+            report.update(name, "build_failed", reason="image build failed")
+        else:
+            report.update(name, "built")
     return build_failed
 
 
@@ -269,6 +301,7 @@ def _run_slots_tagged(
     results_dir: Path,
     jobs: int,
     jobserver: Jobserver | None,
+    report: MatrixReport,
 ) -> dict[str, SlotResult]:
     """Run slots concurrently with live, per-line-tagged output.
 
@@ -289,7 +322,7 @@ def _run_slots_tagged(
     def run_one(name: str) -> SlotResult:
         """Run one slot, holding a job slot while a jobserver sets the pace."""
         with jobserver.slot() if jobserver else nullcontext():
-            return run_slot(config, name, results_dir, scope=args.scope, line_prefix=prefixes[name])
+            return _run_reported_slot(config, name, results_dir, args.scope, report, prefixes[name])
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         try:
@@ -310,6 +343,33 @@ def _run_slots_tagged(
             pool.shutdown(cancel_futures=True)
             raise
     return results
+
+
+def _run_reported_slot(
+    config: MatrixConfig,
+    name: str,
+    results_dir: Path,
+    scope: str,
+    report: MatrixReport,
+    line_prefix: str = "",
+) -> SlotResult:
+    """Run a slot and publish its verdict before the rest of the matrix finishes."""
+    report.update(name, "testing")
+    result = run_slot(
+        config,
+        name,
+        results_dir,
+        scope=scope,
+        **({"line_prefix": line_prefix} if line_prefix else {}),
+    )
+    report.update(
+        name,
+        "passed" if result.passed else "failed",
+        observed=result.observed,
+        network_hint=result.network_hint,
+        skips=_read_slot_skips(results_dir, name),
+    )
+    return result
 
 
 def _slot_prefixes(names: list[str]) -> dict[str, str]:
@@ -561,6 +621,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("slots", nargs="*", help="slots to run (default: all declared)")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="path to matrix.yml")
+    parser.add_argument("--report", type=Path, help="write atomic JSON progress and final results")
     parser.add_argument("--list", action="store_true", help="list available slots")
     parser.add_argument(
         "--slots-json", action="store_true", help="print the slot list as JSON (for CI)"

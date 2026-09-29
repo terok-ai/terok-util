@@ -60,3 +60,21 @@ are stable across minor releases.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Matrix reporting
+
+`terok-matrix --report report.json [slots...]` writes an atomic JSON snapshot
+alongside the normal terminal output. It updates after build and test transitions,
+and retains completed verdicts if the matrix is interrupted. The destination is
+independent of the engine's temporary workspace.
+
+The snapshot has `schema_version: 1`, matrix `state`, `exit_code`, `error`, elapsed
+`duration` in seconds, and a `slots` object keyed by slot name. Each slot records
+its `state`, `reason`, `observed` version, optional suspected `network_hint`,
+`duration`, and within-slot `skips`. Slot states are `pending`, `building`, `built`,
+`testing`, `passed`, `failed`, `build_failed`, `skipped`, `cancelled`, or `error`.
+A build-only run leaves successful slots `built`, not `passed`.
+
+Consumers can poll this file without parsing terminal output. SIGTERM and Ctrl-C
+finalize the report; SIGKILL cannot, so the supervising process must report that
+interruption. Configuration errors before execution may leave no report.
