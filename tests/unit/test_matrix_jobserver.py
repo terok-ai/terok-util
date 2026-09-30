@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from terok_util.matrix import cli, runner
+from terok_util.matrix import cli, jobserver, runner
 from terok_util.matrix.jobserver import Jobserver
 from unit.matrix_fixtures import load_fixture, write_config
 
@@ -222,13 +222,23 @@ def test_a_sigterm_mid_walk_starts_no_more_slots(
     assert signal.getsignal(signal.SIGTERM) is previous
 
 
-def test_one_cancelled_wait_does_not_close_the_shared_jobserver(server: tuple[Path, int]) -> None:
+def test_one_cancelled_wait_does_not_close_the_shared_jobserver(
+    server: tuple[Path, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A queued run may leave while other runs continue using the same worker budget."""
     fifo, fd = server
     client = Jobserver.from_environ({"MAKEFLAGS": f"--jobserver-auth=fifo:{fifo}"})
     assert client is not None
     cancelled = threading.Event()
     gave_up = threading.Event()
+    waiting = threading.Event()
+    select = jobserver.select.select
+
+    def observed_wait(*args):
+        waiting.set()
+        return select(*args)
+
+    monkeypatch.setattr(jobserver.select, "select", observed_wait)
 
     def waiting_slot() -> None:
         try:
@@ -239,6 +249,7 @@ def test_one_cancelled_wait_does_not_close_the_shared_jobserver(server: tuple[Pa
 
     waiter = threading.Thread(target=waiting_slot, daemon=True)
     waiter.start()
+    assert waiting.wait(2), "the slot did not reach the token wait"
     cancelled.set()
     assert gave_up.wait(2)
     waiter.join()

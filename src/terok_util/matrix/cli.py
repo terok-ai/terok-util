@@ -173,6 +173,9 @@ def _run_matrix(
         try:
             if not args.keep_dangling:
                 _teardown(config)
+        except KeyboardInterrupt:
+            exit_code = EXIT_INTERRUPTED
+            raise
         except OSError as exc:
             exit_code, error = 2, str(exc)
             raise

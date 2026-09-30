@@ -121,3 +121,19 @@ def test_teardown_failure_does_not_publish_a_successful_matrix(engine, monkeypat
     assert report["exit_code"] == 2
     assert report["error"] == "container cleanup failed"
     assert report["slots"]["debian13"]["state"] == "passed"
+
+
+def test_teardown_interruption_keeps_finished_slots(engine, monkeypatch):
+    """Interrupted cleanup cancels the matrix without discarding completed slot results."""
+    args, path = engine
+
+    def interrupted_teardown(config):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_teardown", interrupted_teardown)
+    with pytest.raises(KeyboardInterrupt):
+        cli.main([*args, "debian13"])
+    report = json.loads(path.read_text())
+    assert report["state"] == "cancelled"
+    assert report["exit_code"] == cli.EXIT_INTERRUPTED
+    assert report["slots"]["debian13"]["state"] == "passed"
