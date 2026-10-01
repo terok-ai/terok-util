@@ -56,11 +56,11 @@ import struct
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import IntFlag
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from pathlib import Path
 
 #: ``prctl`` option number for the dumpable flag (``linux/prctl.h``).
 _PR_SET_DUMPABLE = 4
@@ -327,6 +327,10 @@ def confine_filesystem(read_exec: Iterable[Path], read_write: Iterable[Path]) ->
     if scope_failure := _thread_scope_failure(abi):
         return LandlockReport(False, scope_failure)
 
+    read_exec, read_write = tuple(read_exec), tuple(read_write)
+    if reason := _unsupported_filesystem((*read_exec, *read_write)):
+        return LandlockReport(False, reason)
+
     read_access, write_access = _access_masks(abi)
     ruleset = _create_ruleset(libc, write_access)
     if ruleset < 0:
@@ -352,6 +356,38 @@ def confine_filesystem(read_exec: Iterable[Path], read_write: Iterable[Path]) ->
             partially_confined=True,
         )
     return LandlockReport(True, f"filesystem confined (Landlock ABI {abi})")
+
+
+#: Mount metadata is checked before Landlock's irreversible restriction.
+_MOUNTINFO = Path("/proc/self/mountinfo")
+
+
+def _unsupported_filesystem(paths: Iterable[Path]) -> str | None:
+    """Reject eCryptfs grants: directory opens also check the ungranted lower tree.
+
+    A successful add_rule does not prove access works on stacked filesystems.
+    Do not grant the encrypted backing tree or claim confinement succeeded.
+    Keep the existing best-effort contract, with an explicit diagnostic.
+    """
+    try:
+        mounts = _MOUNTINFO.read_text().splitlines()
+    except OSError:
+        return None
+    try:
+        resolved = tuple(path.resolve() for path in paths)
+    except (OSError, RuntimeError) as error:
+        return f"cannot resolve grant paths: {error}; filesystem unconfined"
+    for line in mounts:
+        fields, separator, filesystem = line.partition(" - ")
+        if not separator or filesystem.split()[0] != "ecryptfs":
+            continue
+        mount = fields.split()[4]
+        for escaped, plain in ((r"\040", " "), (r"\011", "\t"), (r"\012", "\n"), (r"\134", "\\")):
+            mount = mount.replace(escaped, plain)
+        root = Path(mount)
+        if any(path.is_relative_to(root) or root.is_relative_to(path) for path in resolved):
+            return "eCryptfs directory access is incompatible with Landlock; filesystem unconfined"
+    return None
 
 
 def _landlock_abi(libc: ctypes.CDLL) -> int:

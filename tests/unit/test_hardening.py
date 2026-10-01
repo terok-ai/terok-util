@@ -457,7 +457,7 @@ class TestConfineFilesystem:
         report = confine_filesystem([symlink_loop], [])
 
         assert not report.confined
-        assert "open grant path" in report.reason
+        assert "open grant path" in report.reason or "cannot resolve grant paths" in report.reason
         assert fake_libc.restrict_flags == []
 
     def test_inspection_error_abandons_ruleset(
@@ -562,3 +562,37 @@ class TestConfineFilesystem:
         assert not report.confined
         assert "restrict_self" in report.reason
         assert fake_libc.restrict_flags == [0]
+
+
+class TestStackedFilesystem:
+    """Reject unusable eCryptfs grants before an irreversible restriction."""
+
+    def test_ecryptfs_grant_does_not_restrict(self, tmp_path, monkeypatch):
+        """An accepted kernel rule would still deny package directory reads."""
+        root = tmp_path / "encrypted home"
+        root.mkdir()
+        mounts = tmp_path / "mountinfo"
+        escaped = str(root).replace(" ", r"\040")
+        mounts.write_text(f"1 0 0:1 / {escaped} rw - ecryptfs lower rw\n")
+        monkeypatch.setattr(hardening, "_MOUNTINFO", mounts)
+        libc = _FakeLandlockLibc()
+        monkeypatch.setattr(hardening, "_libc", lambda: libc)
+        monkeypatch.setattr(hardening, "_process_thread_count", lambda: 1)
+        report = confine_filesystem(iter([root / "python"]), iter([]))
+        assert not report.confined
+        assert "eCryptfs" in report.reason
+        assert not libc.restrict_flags
+        assert not libc.handled_access
+
+    def test_unrelated_mount_does_not_disable_confinement(self, tmp_path, monkeypatch):
+        """An encrypted home does not prevent confining an independent runtime."""
+        mounts = tmp_path / "mountinfo"
+        mounts.write_text(f"1 0 0:1 / {tmp_path / 'encrypted'} rw - ecryptfs lower rw\n")
+        monkeypatch.setattr(hardening, "_MOUNTINFO", mounts)
+        assert hardening._unsupported_filesystem([tmp_path / "runtime"]) is None
+        assert "eCryptfs" in hardening._unsupported_filesystem([tmp_path])
+
+    def test_missing_mountinfo_preserves_existing_behavior(self, tmp_path, monkeypatch):
+        """Unavailable mount metadata leaves kernel capability checks in charge."""
+        monkeypatch.setattr(hardening, "_MOUNTINFO", tmp_path / "missing")
+        assert hardening._unsupported_filesystem([tmp_path]) is None
