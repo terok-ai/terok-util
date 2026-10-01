@@ -117,7 +117,7 @@ jobs:
 
       - name: Coverage artifact (master — same SHA, required)
         if: github.ref == 'refs/heads/master'
-        uses: dawidd6/action-download-artifact@634d83b91986fcec9be314054943fa5c976aeb0e # v25
+        uses: dawidd6/action-download-artifact@27e4ae67c24b67d3b54bc6d6a45475be1e28031b # v26
         with:
           workflow: analysis.yml
           workflow_conclusion: success
@@ -132,7 +132,7 @@ jobs:
       # same-SHA artifact here instead.
       - name: Coverage artifact (non-master — same SHA, best effort)
         if: github.ref != 'refs/heads/master'
-        uses: dawidd6/action-download-artifact@634d83b91986fcec9be314054943fa5c976aeb0e # v25
+        uses: dawidd6/action-download-artifact@27e4ae67c24b67d3b54bc6d6a45475be1e28031b # v26
         with:
           workflow: analysis.yml
           workflow_conclusion: completed
@@ -143,7 +143,7 @@ jobs:
 
       - name: Coverage artifact (non-master — fall back to latest master)
         if: github.ref != 'refs/heads/master' && !hashFiles('reports/coverage.json')
-        uses: dawidd6/action-download-artifact@634d83b91986fcec9be314054943fa5c976aeb0e # v25
+        uses: dawidd6/action-download-artifact@27e4ae67c24b67d3b54bc6d6a45475be1e28031b # v26
         with:
           workflow: analysis.yml
           workflow_conclusion: success
