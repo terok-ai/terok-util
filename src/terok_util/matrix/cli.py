@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         print(config.image_prefix)
         return 0
 
-    _warn_keyring()
+    _warn_kernel_keyring()
     if config.host_confines_pasta:
         print(_pasta_warning())
     with tempfile.TemporaryDirectory(prefix=f"{config.image_prefix}-matrix-") as scratch:
@@ -534,7 +534,7 @@ def _version_summary(config: MatrixConfig, name: str, observed: str) -> str:
 # ── Host preflight ─────────────────────────────────────────────────
 
 
-def _warn_keyring() -> None:
+def _warn_kernel_keyring() -> None:
     """Nudge the operator to disable kernel keyrings in containers.conf.
 
     Matrix runs cycle many containers and can exhaust the per-user 200-key
@@ -556,7 +556,7 @@ def _warn_keyring() -> None:
         f"{YELLOW}WARNING: kernel keyring is not disabled in containers.conf\n"
         "\n"
         "  Matrix tests create many containers and may exhaust the per-user\n"
-        "  keyring quota (200 keys), causing spurious EDQUOT errors.\n"
+        "  kernel keyring quota (200 keys), causing spurious EDQUOT errors.\n"
         "\n"
         f"  Add to {BOLD}~/.config/containers/containers.conf{YELLOW}:\n"
         "\n"

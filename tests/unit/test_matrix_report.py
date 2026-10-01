@@ -18,7 +18,7 @@ def engine(tmp_path, monkeypatch):
     config = write_config(tmp_path)
     report = tmp_path / "reports" / "matrix.json"
     monkeypatch.setattr(cli, "_teardown", lambda config: None)
-    monkeypatch.setattr(cli, "_warn_keyring", lambda: None)
+    monkeypatch.setattr(cli, "_warn_kernel_keyring", lambda: None)
     monkeypatch.setattr(cli, "_host_confines_pasta", lambda: False)
     monkeypatch.setattr(cli, "_skip_reason", lambda config, name: "")
     monkeypatch.setattr(cli, "build_image", lambda *a, **k: True)

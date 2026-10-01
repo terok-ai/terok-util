@@ -6,7 +6,7 @@
 [`runner`][terok_util.matrix.runner] is exercised against a recorded
 ``subprocess.run``; [`cli`][terok_util.matrix.cli] against stubbed runner
 functions — between them every orchestration branch (pass, fail, skip,
-build failure, teardown, interrupt, keyring warning) runs without a
+build failure, teardown, interrupt, kernel keyring warning) runs without a
 container host.
 """
 
@@ -637,10 +637,10 @@ def test_host_confines_pasta_reads_the_profile_state(
     assert cli._host_confines_pasta() is confines
 
 
-# ── cli: keyring preflight ─────────────────────────────────────────
+# ── cli: kernel keyring preflight ─────────────────────────────────
 
 
-def test_keyring_warning_fires_without_the_setting(
+def test_kernel_keyring_warning_fires_without_the_setting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A containers.conf without keyring=false earns the EDQUOT warning."""
@@ -648,12 +648,12 @@ def test_keyring_warning_fires_without_the_setting(
     conf.write_text("[containers]\n", encoding="utf-8")
     monkeypatch.setenv("CONTAINERS_CONF", str(conf))
 
-    cli._warn_keyring()
+    cli._warn_kernel_keyring()
 
     assert "kernel keyring is not disabled" in capsys.readouterr().out
 
 
-def test_keyring_warning_respects_the_setting(
+def test_kernel_keyring_warning_respects_the_setting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """keyring = false (with comment/spacing noise) silences the warning."""
@@ -661,18 +661,18 @@ def test_keyring_warning_respects_the_setting(
     conf.write_text("[containers]\nkeyring = false  # quota\n", encoding="utf-8")
     monkeypatch.setenv("CONTAINERS_CONF", str(conf))
 
-    cli._warn_keyring()
+    cli._warn_kernel_keyring()
 
     assert capsys.readouterr().out == ""
 
 
-def test_keyring_warning_when_no_conf_exists(
+def test_kernel_keyring_warning_when_no_conf_exists(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No containers.conf anywhere: warn (the default keeps keyrings on)."""
+    """No containers.conf anywhere: warn (the default keeps kernel keyrings on)."""
     monkeypatch.delenv("CONTAINERS_CONF", raising=False)
 
-    cli._warn_keyring()
+    cli._warn_kernel_keyring()
 
     assert "kernel keyring" in capsys.readouterr().out
 
