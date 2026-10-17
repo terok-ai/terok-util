@@ -111,7 +111,7 @@ def test_nixos_builder_provides_its_tarball_decompressor(tmp_path: Path, flavor:
 
 
 @pytest.mark.parametrize("flavor", ["podman", "dbus"])
-def test_nixos_provides_native_dbus_build_and_keyring_libraries(
+def test_nixos_provides_native_dbus_build_and_kernel_keyring_libraries(
     tmp_path: Path, flavor: str
 ) -> None:
     """Complete suites can build D-Bus bindings and load keyutils without FHS links."""
