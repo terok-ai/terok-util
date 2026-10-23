@@ -140,8 +140,41 @@ def test_setup_results_compose_downward_without_owner_knowledge() -> None:
     with pytest.raises(SetupDowngradeError):
         require_no_downgrade([missing, newer])
     require_no_downgrade([missing])
-    with pytest.raises(SetupRequiredError, match="Run setup again"):
+    with pytest.raises(SetupRequiredError, match="parent: not set up yet. Run setup."):
         require_setup([missing])
+
+
+def test_first_run_reports_an_owner_as_not_set_up_instead_of_its_absent_artifacts() -> None:
+    """A missing receipt means no setup ever completed: one fact, and no 'again'."""
+    checks = [
+        SetupCheck("owner", "receipt", SetupStatus.MISSING, "Setup receipt is missing"),
+        SetupCheck("owner", "hooks", SetupStatus.MISSING, "Missing hook files: a, b, c"),
+    ]
+    with pytest.raises(SetupRequiredError) as excinfo:
+        require_setup(checks)
+    assert str(excinfo.value) == "owner: not set up yet. Run setup."
+
+
+def test_first_run_owner_sits_beside_a_repairable_one_in_order() -> None:
+    """Only the owner without a receipt collapses; a set-up owner keeps its diagnostics."""
+    checks = [
+        SetupCheck("fresh", "receipt", SetupStatus.MISSING, "Setup receipt is missing"),
+        SetupCheck("stale", "receipt", SetupStatus.STALE, "Setup version or inputs changed"),
+        SetupCheck("fresh", "hooks", SetupStatus.MISSING, "Missing hook files: a"),
+    ]
+    with pytest.raises(SetupRequiredError) as excinfo:
+        require_setup(checks)
+    assert str(excinfo.value) == (
+        "fresh: not set up yet; stale/receipt: Setup version or inputs changed. Run setup again."
+    )
+
+
+def test_a_missing_artifact_under_a_present_receipt_is_a_real_diagnostic() -> None:
+    """Setup did complete once, so an absent component is damage to repair, named in full."""
+    checks = [SetupCheck("owner", "hooks", SetupStatus.MISSING, "Missing hook files: a")]
+    with pytest.raises(SetupRequiredError) as excinfo:
+        require_setup(checks)
+    assert str(excinfo.value) == "owner/hooks: Missing hook files: a. Run setup again."
 
 
 def test_ready_and_empty_check_collections_need_no_setup() -> None:

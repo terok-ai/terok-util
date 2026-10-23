@@ -14,33 +14,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `terok-matrix --report PATH`: atomic JSON progress and final results — slot verdicts,
+  skip reasons, build failures, observed versions, suspected network failures — and a
+  jobserver wait a caller can cancel without closing the shared worker budget
+  ([#133](https://github.com/terok-ai/terok-util/pull/133)).
+
+### Changed
+
+- `require_setup` reports an owner whose receipt is missing as `not set up yet`
+  instead of listing every absent artifact, and asks to "Run setup" rather than
+  "Run setup again" when nothing was ever set up.
+
+### Fixed
+
+- A read or write path on an eCryptfs mount is reported as unconfined before Landlock
+  is applied, so callers keep the other process hardening and surface the filesystem
+  limitation instead of failing ([#137](https://github.com/terok-ai/terok-util/pull/137)).
+
+## v0.4.0 — At Your Service
+
+### Added
+
 - Host-tool lookup from the current PATH, with a standalone-copyable implementation.
 - Package-owned setup receipts, readiness results, and downgrade guards.
 - A shared lock serializes setup and uninstall across packages.
-
-Initial extraction from the surrounding terok-`*` packages. First
-release scope (Tier 1 + Tier 2 per
-[terok#111](https://github.com/terok-ai/terok/issues/111)):
-
-- `cli_types` — `CommandDef`, `ArgDef`, `CommandTree`. Replaces
-  parallel copies in `terok-shield`, `terok-clearance`, and the
-  canonical definition in `terok-sandbox`.
-- `fs` — `ensure_dir`, `ensure_dir_writable`, `write_sensitive_file`.
-  Consolidates near-identical copies across `terok-sandbox`,
-  `terok-executor`, and `terok`.
-- `paths` — `namespace_state_dir`, `namespace_config_dir`,
-  `namespace_runtime_dir`. Canonical XDG-aware namespace path
-  resolution.
-- `config_stack` — `ConfigStack`, `deep_merge`. Layered YAML config
-  merge engine.
-- `security` — `sanitize_tty`. Untrusted-string sanitisation for
-  terminal output.
-- `templates` — `render_template` (the strict control-char-rejecting
-  variant from `terok-sandbox`; supersedes the permissive variant
-  that lived in `terok`).
-- `podman` — `podman_userns_args`. Rootless `--userns=keep-id`
-  builder.
-## v0.4.0 — At Your Service
 
 ## What's Changed
 * feat: shared setup receipts and host tool lookup by @sliwowitz in https://github.com/terok-ai/terok-util/pull/128
@@ -96,3 +93,26 @@ Extracted host BestEffortLogger and the YAML round-trip facade, https://github.c
 ## v0.1.0 — The Emissary
 
 First public PyPi release. For historical pre-releases, see https://github.com/terok-ai/terok-util/releases.
+
+Initial extraction from the surrounding terok-`*` packages. First
+release scope (Tier 1 + Tier 2 per
+[terok#111](https://github.com/terok-ai/terok/issues/111)):
+
+- `cli_types` — `CommandDef`, `ArgDef`, `CommandTree`. Replaces
+  parallel copies in `terok-shield`, `terok-clearance`, and the
+  canonical definition in `terok-sandbox`.
+- `fs` — `ensure_dir`, `ensure_dir_writable`, `write_sensitive_file`.
+  Consolidates near-identical copies across `terok-sandbox`,
+  `terok-executor`, and `terok`.
+- `paths` — `namespace_state_dir`, `namespace_config_dir`,
+  `namespace_runtime_dir`. Canonical XDG-aware namespace path
+  resolution.
+- `config_stack` — `ConfigStack`, `deep_merge`. Layered YAML config
+  merge engine.
+- `security` — `sanitize_tty`. Untrusted-string sanitisation for
+  terminal output.
+- `templates` — `render_template` (the strict control-char-rejecting
+  variant from `terok-sandbox`; supersedes the permissive variant
+  that lived in `terok`).
+- `podman` — `podman_userns_args`. Rootless `--userns=keep-id`
+  builder.

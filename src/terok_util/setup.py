@@ -25,6 +25,8 @@ _setup_mutex = threading.RLock()
 _setup_fd: int | None = None
 _SETUP_LOCK_NAME = "setup.lock"
 _SETUP_BUSY = "Another setup operation is already running. Retry after it finishes."
+_RECEIPT_COMPONENT = "receipt"
+_NOT_SET_UP = "not set up yet"
 
 
 @contextmanager
@@ -160,7 +162,7 @@ class SetupReceipt:
 
     def _result(self, status: SetupStatus, diagnostic: str = "") -> SetupCheck:
         """Label a receipt check with its owner."""
-        return SetupCheck(self.owner, "receipt", status, diagnostic)
+        return SetupCheck(self.owner, _RECEIPT_COMPONENT, status, diagnostic)
 
 
 def setup_status(checks: Iterable[SetupCheck]) -> SetupStatus:
@@ -189,11 +191,28 @@ def require_no_downgrade(checks: Iterable[SetupCheck]) -> None:
 
 
 def require_setup(checks: Iterable[SetupCheck]) -> None:
-    """Require all checks to be ready, using typed errors instead of process exits."""
+    """Require all checks to be ready, using typed errors instead of process exits.
+
+    An owner whose receipt is missing has no setup at all — never run, or
+    cleared by a run that did not complete — so its other components can
+    say nothing a first-time user acts on.  Such an owner is reported as
+    that one fact, and the hint asks to run setup, not to run it *again*.
+    """
     pending = [check for check in checks if check.status != SetupStatus.READY]
     require_no_downgrade(pending)
-    if pending:
-        raise SetupRequiredError(_diagnostics(pending) + ". Run setup again.")
+    if not pending:
+        return
+    unset = {
+        check.owner
+        for check in pending
+        if check.component == _RECEIPT_COMPONENT and check.status == SetupStatus.MISSING
+    }
+    segments = dict.fromkeys(
+        f"{check.owner}: {_NOT_SET_UP}" if check.owner in unset else _diagnostic(check)
+        for check in pending
+    )
+    hint = "Run setup." if unset >= {check.owner for check in pending} else "Run setup again."
+    raise SetupRequiredError("; ".join(segments) + f". {hint}")
 
 
 def python_identity() -> str:
@@ -230,11 +249,14 @@ def _valid_receipt(receipt: object) -> bool:
     )
 
 
+def _diagnostic(check: SetupCheck) -> str:
+    """Label one check with its owner and component."""
+    return f"{check.owner}/{check.component}: {check.diagnostic or check.status}"
+
+
 def _diagnostics(checks: Iterable[SetupCheck]) -> str:
     """Join owner-labelled checks without knowing how owners expose their setup CLI."""
-    return "; ".join(
-        f"{check.owner}/{check.component}: {check.diagnostic or check.status}" for check in checks
-    )
+    return "; ".join(map(_diagnostic, checks))
 
 
 __all__ = [
