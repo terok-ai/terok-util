@@ -21,7 +21,7 @@ RUN mkdir -p /run/user/$(id -u podman) && chown podman:podman /run/user/$(id -u 
 # [containers] in the main file, and TOML rejects a duplicate header):
 #
 # - keyring: disable the per-container kernel keyring — prevents
-#   keyring leak / EDQUOT.
+#   kernel keyring leak / EDQUOT.
 # - netns: the upstream image ships netns="host" (nested containers
 #   share the outer netns — the podman-in-podman CI convenience shape).
 #   Shield's whole subject is the per-container netns, so nested
