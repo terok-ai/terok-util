@@ -59,6 +59,12 @@ submodule: `from terok_util.yaml import load, dump, literal_block`.
   test cases that swap config files.
 - **`CommandDef`** — one nominal type across the ecosystem. Don't
   define a structurally-compatible local copy; import it.
+- **Operator config vs. secrets** — write operator-owned config
+  (`config.yml`, `project.yml`, instructions) with `write_config_file`:
+  an existing file is rewritten in place and keeps its symlinks, mode
+  and owner, and a new file is created `0600` in `0700` directories.
+  Secrets go through `write_sensitive_file`, which only creates files
+  and refuses symlinks.
 
 ## Versioning
 

@@ -24,6 +24,7 @@ What lives here, by module:
 * [`fs`][terok_util.fs] — small filesystem helpers
   ([`ensure_dir`][terok_util.fs.ensure_dir],
   [`ensure_dir_writable`][terok_util.fs.ensure_dir_writable],
+  [`write_config_file`][terok_util.fs.write_config_file],
   [`write_sensitive_file`][terok_util.fs.write_sensitive_file]).
 * [`journal`][terok_util.journal] — dependency-free writer for the systemd
   journal's native protocol ([`JournalWriter`][terok_util.journal.JournalWriter],
@@ -77,7 +78,7 @@ from .cli_types import ArgDef, CommandDef, CommandTree, KeyRow, LazyHandler
 from .config_stack import ConfigStack, deep_merge
 
 # ── Filesystem helpers ────────────────────────────────────────────
-from .fs import ensure_dir, ensure_dir_writable, write_sensitive_file
+from .fs import ensure_dir, ensure_dir_writable, write_config_file, write_sensitive_file
 
 # ── Process self-hardening ────────────────────────────────────────
 from .hardening import HardeningReport, LandlockReport, confine_filesystem, harden_self
@@ -174,5 +175,6 @@ __all__ = [
     "require_setup",
     "setup_lock",
     "setup_status",
+    "write_config_file",
     "write_sensitive_file",
 ]

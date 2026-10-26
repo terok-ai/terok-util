@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Filesystem helpers for directory creation and writability checks."""
+"""Filesystem helpers for directory creation, writability checks, and config and secret files."""
 
 from __future__ import annotations
 
@@ -15,10 +15,17 @@ def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def ensure_dir_writable(path: Path, label: str) -> None:
-    """Create *path* if needed and verify it is writable, or exit with an error."""
+def ensure_dir_writable(path: Path, label: str, *, private: bool = False) -> None:
+    """Create *path* if needed and verify it is writable, or exit with an error.
+
+    With *private*, the directories this creates get mode ``0o700``;
+    directories that exist already keep theirs.
+    """
     try:
-        path.mkdir(parents=True, exist_ok=True)
+        if private:
+            _make_private_dirs(path)
+        else:
+            path.mkdir(parents=True, exist_ok=True)
     except Exception as e:
         raise SystemExit(f"{label} directory is not writable: {path} ({e})")
     if not path.is_dir():
@@ -31,6 +38,34 @@ def ensure_dir_writable(path: Path, label: str) -> None:
             f"Fix permissions for the user running this process (uid={uid}, gid={gid}). "
             f"Example: sudo chown -R {uid}:{gid} {path}"
         )
+
+
+def write_config_file(path: Path, text: str) -> None:
+    """Write *text* to the operator-owned config file at *path*.
+
+    An existing file is rewritten in place, so what the operator set up
+    stays: a symlink still points where it did, and the file keeps its
+    mode and owner.  A new file is created with mode ``0o600``, and the
+    directories created for it with ``0o700``, so config is private by
+    default.
+    """
+    _make_private_dirs(path.parent)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as file:
+        file.write(text)
+        file.flush()
+        os.fsync(file.fileno())
+
+
+def _make_private_dirs(path: Path) -> None:
+    """Create *path* and its missing parents with mode ``0o700``; existing ones keep theirs."""
+    missing = []
+    for directory in (path, *path.parents):
+        if directory.exists():
+            break
+        missing.append(directory)
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700, exist_ok=True)
 
 
 def write_sensitive_file(path: Path, content: str) -> bool:
@@ -69,4 +104,4 @@ def write_sensitive_file(path: Path, content: str) -> bool:
     return True
 
 
-__all__ = ["ensure_dir", "ensure_dir_writable", "write_sensitive_file"]
+__all__ = ["ensure_dir", "ensure_dir_writable", "write_config_file", "write_sensitive_file"]

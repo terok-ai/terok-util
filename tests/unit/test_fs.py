@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from terok_util.fs import ensure_dir, ensure_dir_writable, write_sensitive_file
+from terok_util.fs import ensure_dir, ensure_dir_writable, write_config_file, write_sensitive_file
 
 
 class TestEnsureDir:
@@ -68,6 +68,83 @@ class TestEnsureDirWritable:
         finally:
             # Restore so pytest can clean up tmp_path.
             os.chmod(target, 0o755)
+
+
+class TestEnsureDirWritablePrivate:
+    """``private=True`` creates the missing directories ``0o700``."""
+
+    def test_creates_missing_directories_private(self, tmp_path: Path) -> None:
+        target = tmp_path / "a" / "b"
+        ensure_dir_writable(target, label="project", private=True)
+        assert _mode(tmp_path / "a") == 0o700
+        assert _mode(target) == 0o700
+
+    def test_existing_directory_keeps_its_mode(self, tmp_path: Path) -> None:
+        target = tmp_path / "shared"
+        target.mkdir()
+        os.chmod(target, 0o755)
+        ensure_dir_writable(target, label="project", private=True)
+        assert _mode(target) == 0o755
+
+
+class TestWriteConfigFile:
+    """[`write_config_file`][terok_util.fs.write_config_file] writes operator config."""
+
+    def test_new_file_is_private(self, tmp_path: Path) -> None:
+        path = tmp_path / "terok" / "projects" / "demo" / "project.yml"
+        write_config_file(path, "project:\n  name: demo\n")
+        assert path.read_text() == "project:\n  name: demo\n"
+        assert _mode(path) == 0o600
+        for directory in (tmp_path / "terok", path.parent.parent, path.parent):
+            assert _mode(directory) == 0o700
+
+    def test_existing_file_keeps_its_mode(self, tmp_path: Path) -> None:
+        """The operator's permissions stay; only the content changes."""
+        path = tmp_path / "config.yml"
+        path.write_text("old: 1\n")
+        os.chmod(path, 0o644)
+        write_config_file(path, "new: 2\n")
+        assert path.read_text() == "new: 2\n"
+        assert _mode(path) == 0o644
+
+    def test_existing_directory_keeps_its_mode(self, tmp_path: Path) -> None:
+        os.chmod(tmp_path, 0o755)
+        write_config_file(tmp_path / "config.yml", "a: 1\n")
+        assert _mode(tmp_path) == 0o755
+
+    def test_symlink_keeps_pointing_at_its_target(self, tmp_path: Path) -> None:
+        """A dotfiles-managed config stays a link; the target gets the new text."""
+        target = tmp_path / "dotfiles" / "config.yml"
+        target.parent.mkdir()
+        target.write_text("old: 1\n")
+        link = tmp_path / "config.yml"
+        link.symlink_to(target)
+        write_config_file(link, "new: 2\n")
+        assert link.is_symlink()
+        assert target.read_text() == "new: 2\n"
+
+    def test_dangling_symlink_creates_its_target_private(self, tmp_path: Path) -> None:
+        target = tmp_path / "dotfiles" / "config.yml"
+        target.parent.mkdir()
+        link = tmp_path / "config.yml"
+        link.symlink_to(target)
+        write_config_file(link, "a: 1\n")
+        assert link.is_symlink()
+        assert target.read_text() == "a: 1\n"
+        assert _mode(target) == 0o600
+
+    def test_hard_link_sees_the_new_text(self, tmp_path: Path) -> None:
+        """The file is rewritten in place, not replaced, so it stays the same file."""
+        path = tmp_path / "config.yml"
+        path.write_text("old: 1\n")
+        twin = tmp_path / "twin.yml"
+        os.link(path, twin)
+        write_config_file(path, "new: 2\n")
+        assert twin.read_text() == "new: 2\n"
+
+
+def _mode(path: Path) -> int:
+    return os.stat(path).st_mode & 0o777
 
 
 class TestWriteSensitiveFile:
