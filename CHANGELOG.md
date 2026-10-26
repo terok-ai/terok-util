@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Host-tool lookup from the current PATH, with a standalone-copyable implementation.
 - Package-owned setup receipts, readiness results, and downgrade guards.
 - A shared lock serializes setup and uninstall across packages.
+- `yaml.literal_block` marks multi-line text to dump as a readable `|` block (double-quoted when a block cannot carry it).
 
 Initial extraction from the surrounding terok-`*` packages. First
 release scope (Tier 1 + Tier 2 per

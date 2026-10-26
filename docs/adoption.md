@@ -42,7 +42,7 @@ from terok_util import CommandDef, ensure_dir, namespace_state_dir, ...
 ```
 
 The one exception is the round-trip YAML facade, reached as a
-submodule: `from terok_util.yaml import load, dump`.
+submodule: `from terok_util.yaml import load, dump, literal_block`.
 
 ## Behaviour to know about
 

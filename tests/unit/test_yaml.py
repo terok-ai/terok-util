@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from terok_util.yaml import YAMLError, dump, load
+from terok_util.yaml import YAMLError, dump, literal_block, load
 
 
 class TestLoad:
@@ -184,6 +184,74 @@ class TestRoundTrip:
         assert "# header" in text
         assert "# project name" in text
         assert "name: test" in text
+
+
+class TestLiteralBlock:
+    """Tests for ``literal_block``."""
+
+    def test_dumps_as_literal_block(self) -> None:
+        result = dump({"snippet": literal_block("RUN one\nRUN two\n")})
+        assert result == "snippet: |\n  RUN one\n  RUN two\n"
+
+    def test_is_a_plain_string_value(self) -> None:
+        text = "RUN one\n"
+        block = literal_block(text)
+        assert isinstance(block, str)
+        assert block == text
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "RUN one\nRUN two\n",
+            "no trailing newline",
+            "",
+            "  leading spaces\nRUN two\n",
+            "trailing spaces  \nRUN two\n",
+            "\n\nblank lines around\n\n\n",
+        ],
+    )
+    def test_round_trips_text_exactly(self, text: str) -> None:
+        data = load("parent:\n  other: 1\n")
+        data["parent"]["snippet"] = literal_block(text)
+        assert load(dump(data))["parent"]["snippet"] == text
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "RUN echo \x1b[1mbold\x1b[0m\n",
+            "nul\x00byte\n",
+            "lone\rcarriage return\n",
+            "next\x85line\n",
+            "line\u2028and paragraph\u2029separators\n",
+        ],
+        ids=["escape", "nul", "cr", "nel", "ls-ps"],
+    )
+    def test_text_a_block_cannot_carry_is_double_quoted(self, text: str) -> None:
+        """Control characters and foreign line breaks would make the file unloadable."""
+        result = dump({"snippet": literal_block(text)})
+        assert result.startswith('snippet: "')
+        assert load(result)["snippet"] == text
+
+    def test_every_control_character_round_trips(self) -> None:
+        """No character makes the dumped file unloadable or changes the text."""
+        specials = [*range(0x100), 0x2028, 0x2029, 0xFEFF, 0xFFFE, 0xFFFF, 0x1F600]
+        for codepoint in specials:
+            text = f"before{chr(codepoint)}after\n"
+            assert load(dump({"snippet": literal_block(text)}))["snippet"] == text, hex(codepoint)
+
+    def test_replacing_a_block_value_with_unsafe_text_round_trips(self) -> None:
+        """An existing ``|`` value keeps no style that would carry the new text raw."""
+        data = load("snippet: |\n  RUN one\n")
+        data["snippet"] = literal_block("RUN \x1b[1mtwo\n")
+        assert load(dump(data))["snippet"] == "RUN \x1b[1mtwo\n"
+
+    def test_keeps_comments_around_the_block(self) -> None:
+        data = load("# header\nparent:\n  other: 1  # keep\n")
+        data["parent"]["snippet"] = literal_block("RUN one\n")
+        result = dump(data)
+        assert "# header" in result
+        assert "# keep" in result
+        assert "snippet: |\n    RUN one\n" in result
 
 
 class TestThreadSafety:
