@@ -152,7 +152,7 @@ def _is_root() -> bool:
     """
     try:
         euid = os.geteuid()
-    except AttributeError:  # pragma: no cover — non-POSIX
+    except AttributeError:  # pragma: no cover - non-POSIX
         return getpass.getuser() == "root"
     return euid == 0 and _in_initial_userns()
 
@@ -204,7 +204,7 @@ def read_config_section(section: str) -> dict[str, str]:
             stack.push(load_yaml_scope(label, path))
         merged = stack.resolve_section(section)
         result = {k: str(v) for k, v in merged.items() if v is not None}
-    except Exception:  # noqa: BLE001 — fail-silent; bad config should not crash path resolution  # nosec B110 — best-effort probe; failure is non-fatal
+    except Exception:  # noqa: BLE001 - fail-silent; bad config should not crash path resolution  # nosec B110 - best-effort probe; failure is non-fatal
         pass
     _config_section_cache[section] = result
     return result
@@ -233,7 +233,7 @@ def read_config_top_level(key: str) -> object | None:
         for label, path in config_file_paths():
             stack.push(load_yaml_scope(label, path))
         result = stack.resolve().get(key)
-    except Exception:  # noqa: BLE001 — fail-silent; bad config should not crash field resolution  # nosec B110 — best-effort probe; failure is non-fatal
+    except Exception:  # noqa: BLE001 - fail-silent; bad config should not crash field resolution  # nosec B110 - best-effort probe; failure is non-fatal
         pass
     _config_top_level_cache[key] = result
     return result

@@ -20,7 +20,7 @@ from terok_util.paths import (
 # Test-only mock filesystem prefix.  All synthetic paths live here so we
 # never poke at real directories — mirrors the convention in the sibling
 # packages' ``tests/constants.py``.
-MOCK_BASE = Path("/tmp/terok-util-testing")  # nosec B108 — synthetic test-only path
+MOCK_BASE = Path("/tmp/terok-util-testing")  # nosec B108 - synthetic test-only path
 
 _NAMESPACE_ROOT = "terok"
 

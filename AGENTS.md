@@ -16,6 +16,17 @@ graph only, so after changing non-Python inputs (YAML, templates, shell
 scripts) run the full `make test` — `make test-fast` would skip tests that
 are actually affected.
 
+## Code style
+
+- Machine-read comments are ASCII-only: a comment that a tool parses —
+  a suppression marker (`# noqa`, `# nosec`, `# type: ignore`,
+  `# pragma: no cover`, `# NOSONAR`) or another directive (`# fmt: off`,
+  `# pylint: disable`) — uses ASCII only, its reason included.  Write
+  `# noqa: BLE001 - reason` with a plain hyphen.  Keep commas out of a
+  `noqa` reason: SonarCloud reads a comma as the start of another rule
+  code, so use a semicolon.  Ordinary comments may use any UTF-8, and
+  docstrings are welcome to use proper typography.
+
 ## Dependency Pinning & `pyproject.toml` Hygiene
 
 **Version pinning policy.** Runtime/production dependencies — those pulled in

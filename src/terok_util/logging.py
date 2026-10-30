@@ -87,7 +87,7 @@ class BestEffortLogger:
             )
             with os.fdopen(fd, "a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] {level}: {message}\n")
-        except Exception:  # nosec B110 — intentionally silent
+        except Exception:  # nosec B110 - intentionally silent
             pass
 
     def debug(self, message: str) -> None:
@@ -113,7 +113,7 @@ class BestEffortLogger:
                 f"Warning [{sanitize_tty(component)}]: {sanitize_tty(message)}",
                 file=sys.stderr,
             )
-        except Exception:  # nosec B110 — intentionally silent
+        except Exception:  # nosec B110 - intentionally silent
             pass
         self.warning(f"[{component}] {message}")
 
@@ -147,7 +147,7 @@ class _JournalHandler(logging.Handler):
                 CODE_LINE=str(record.lineno),
                 CODE_FUNC=record.funcName or "",
             )
-        except Exception:  # noqa: BLE001 — logging must never raise into the caller
+        except Exception:  # noqa: BLE001 - logging must never raise into the caller
             self.handleError(record)
 
     def close(self) -> None:

@@ -24,7 +24,7 @@ import re
 from io import StringIO
 from typing import Any
 
-from ruamel.yaml import YAML, YAMLError  # noqa: F401 — re-exported
+from ruamel.yaml import YAML, YAMLError  # noqa: F401 - re-exported
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString, LiteralScalarString
 
 __all__ = ["load", "dump", "literal_block", "YAMLError"]

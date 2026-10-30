@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess  # nosec B404 — probe children are the point of this suite
+import subprocess  # nosec B404 - probe children are the point of this suite
 import sys
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -84,7 +84,7 @@ def child_json() -> Callable[[str, Mapping[str, str] | None], Any]:
 
     def run(code: str, env: Mapping[str, str] | None = None) -> Any:
         child_env = {"PATH": CHILD_PATH, **(env or {})}
-        proc = subprocess.run(  # nosec B603 — fixed argv, no shell
+        proc = subprocess.run(  # nosec B603 - fixed argv, no shell
             [sys.executable, "-c", code],
             env=child_env,
             capture_output=True,

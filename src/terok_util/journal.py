@@ -111,7 +111,7 @@ class JournalWriter:
         try:
             self._sock.send(datagram)
         except OSError:
-            pass  # nosec B110 — logging is best-effort, never fatal to the caller
+            pass  # nosec B110 - logging is best-effort, never fatal to the caller
 
     def close(self) -> None:
         """Close the underlying datagram socket."""
