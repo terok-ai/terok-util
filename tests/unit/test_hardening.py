@@ -467,9 +467,9 @@ class TestConfineFilesystem:
         lane = tmp_path / "lane"
         lane.touch()
         fake_libc = _stub_landlock(monkeypatch)
-        monkeypatch.setattr(hardening.os, "fstat", MagicMock(side_effect=OSError(errno.EIO, "I/O")))
-
-        report = confine_filesystem([lane], [])
+        with monkeypatch.context() as patch:
+            patch.setattr(hardening.os, "fstat", MagicMock(side_effect=OSError(errno.EIO, "I/O")))
+            report = confine_filesystem([lane], [])
 
         assert not report.confined
         assert "inspect grant path" in report.reason
