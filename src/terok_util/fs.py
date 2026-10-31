@@ -7,12 +7,51 @@ from __future__ import annotations
 
 import contextlib
 import os
+import pwd
+import stat
 from pathlib import Path
 
 
-def ensure_dir(path: Path) -> None:
-    """Create a directory (and parents) if it doesn't exist."""
-    path.mkdir(parents=True, exist_ok=True)
+def ensure_dir(path: Path, *, mode: int = 0o777) -> None:
+    """Create missing directories with *mode*, subject to the process umask.
+
+    New directories use the account's primary group when possible, not a
+    transient ``newgrp`` group that rootless Podman may not map. Explicit
+    setgid inheritance takes precedence. Existing directories keep their
+    ownership, permissions and ACLs.
+    """
+    if path.is_dir():
+        return
+    if path.parent != path:
+        ensure_dir(path.parent, mode=mode)
+    try:
+        path.mkdir(mode=mode)
+    except FileExistsError:
+        if not path.is_dir():
+            raise
+    else:
+        _use_account_group(path)
+
+
+def _use_account_group(path: Path) -> None:
+    """Use the account group only for a directory this process just created.
+
+    Account lookup or chgrp failure must not reject an otherwise usable
+    directory. Never follow a replacement symlink or override setgid policy.
+    """
+    if os.geteuid() == 0:
+        return
+    with contextlib.suppress(KeyError, OSError):
+        gid = pwd.getpwuid(os.geteuid()).pw_gid
+        if gid == os.getegid() or gid not in os.getgroups():
+            return
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            directory = os.fstat(fd)
+            if directory.st_gid != gid and not directory.st_mode & stat.S_ISGID:
+                os.fchown(fd, -1, gid)
+        finally:
+            os.close(fd)
 
 
 def ensure_dir_writable(path: Path, label: str, *, private: bool = False) -> None:
@@ -22,10 +61,7 @@ def ensure_dir_writable(path: Path, label: str, *, private: bool = False) -> Non
     directories that exist already keep theirs.
     """
     try:
-        if private:
-            _make_private_dirs(path)
-        else:
-            path.mkdir(parents=True, exist_ok=True)
+        ensure_dir(path, mode=0o700 if private else 0o777)
     except Exception as e:
         raise SystemExit(f"{label} directory is not writable: {path} ({e})")
     if not path.is_dir():
@@ -49,7 +85,7 @@ def write_config_file(path: Path, text: str) -> None:
     directories created for it with ``0o700``, so config is private by
     default.
     """
-    _make_private_dirs(path.parent)
+    ensure_dir(path.parent, mode=0o700)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as file:
         file.write(text)
@@ -57,31 +93,20 @@ def write_config_file(path: Path, text: str) -> None:
         os.fsync(file.fileno())
 
 
-def _make_private_dirs(path: Path) -> None:
-    """Create *path* and its missing parents with mode ``0o700``; existing ones keep theirs."""
-    missing = []
-    for directory in (path, *path.parents):
-        if directory.exists():
-            break
-        missing.append(directory)
-    for directory in reversed(missing):
-        directory.mkdir(mode=0o700, exist_ok=True)
-
-
 def write_sensitive_file(path: Path, content: str) -> bool:
     """Atomically create *path* with mode ``0o600`` and write *content*.
 
     Returns ``True`` if the file was created, ``False`` if it already existed.
-    Parent directories are created with mode ``0o700``.
+    Missing parent directories are created with mode ``0o700``. Existing
+    parents keep their ownership, permissions and ACLs.
 
-    Refuses to operate if *path.parent* is a symbolic link — chmod would
-    otherwise follow the link target.  Opens the file with ``O_NOFOLLOW``
+    Refuses to operate if *path.parent* is a symbolic link.
+    Opens the file with ``O_NOFOLLOW``
     so a planted symlink at the final path cannot redirect the write.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_dir(path.parent, mode=0o700)
     if path.parent.is_symlink():
         raise RuntimeError(f"Refusing to use symlinked directory for sensitive file: {path.parent}")
-    os.chmod(path.parent, 0o700)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)

@@ -24,6 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
+from .fs import ensure_dir
 from .journal import (
     PRIORITY_ERR,
     PRIORITY_INFO,
@@ -78,7 +79,7 @@ class BestEffortLogger:
         """
         try:
             log_path = self._log_path_fn()
-            log_path.parent.mkdir(parents=True, exist_ok=True)
+            ensure_dir(log_path.parent)
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             fd = os.open(
                 log_path,
