@@ -42,9 +42,12 @@ def read_untrusted_bytes(path: Path, *, max_bytes: int) -> bytes:
         raise ValueError("max_bytes must not be negative")
     with open_untrusted_directory(path.parent) as parent:
         fd = _open_file(parent, path.name, os.O_RDONLY)
-        with os.fdopen(fd, "rb") as source:
-            _require_regular(os.fstat(source.fileno()), path)
-            content = source.read(max_bytes + 1)
+        try:
+            _require_regular(os.fstat(fd), path)
+            with os.fdopen(fd, "rb", closefd=False) as source:
+                content = source.read(max_bytes + 1)
+        finally:
+            os.close(fd)
     if len(content) > max_bytes:
         raise UnsafePathError(f"File exceeds {max_bytes} bytes: {path}")
     return content
