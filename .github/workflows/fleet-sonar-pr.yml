@@ -112,6 +112,11 @@ jobs:
           # comment documents the mitigations.
           allow-unsafe-pr-checkout: true
 
+      - name: Prepare report directory
+        run: |
+          rm -rf -- reports
+          mkdir -- reports
+
       - uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}

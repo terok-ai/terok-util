@@ -75,6 +75,11 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Prepare report directory
+        run: |
+          rm -rf -- reports
+          mkdir -- reports
+
       - name: Wait for Tests & Analysis on this commit
         uses: actions/github-script@v9
         with:

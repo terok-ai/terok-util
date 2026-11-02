@@ -28,6 +28,13 @@ def test_scanner_uses_preserved_trusted_settings(name: str, tmp_path: Path) -> N
     trusted = steps[0]
     preserve = steps[1]
     scanner = steps[-1]
+    checkout_index = next(
+        index
+        for index, step in enumerate(steps[2:], start=2)
+        if step.get("uses", "").startswith("actions/checkout@")
+    )
+    prepare_reports = steps[checkout_index + 1]
+    assert prepare_reports["name"] == "Prepare report directory"
     assert trusted["name"] == "Checkout trusted scanner settings"
     assert trusted["with"]["repository"] == "${{ github.repository }}"
     assert trusted["with"]["persist-credentials"] is False
@@ -60,6 +67,15 @@ def test_scanner_uses_preserved_trusted_settings(name: str, tmp_path: Path) -> N
         f"sonar.host.url={UNTRUSTED_HOST}\n"
         f"sonar.scanner.apiBaseUrl={UNTRUSTED_HOST}\n"
         "sonar.scanner.javaExePath=./steal-token\n"
+    )
+    # A tracked reports symlink must not redirect later artifact extraction
+    # into the preserved trusted settings directory.
+    reports = workspace / "reports"
+    reports.symlink_to(runner_temp / "terok-sonar", target_is_directory=True)
+    subprocess.run(["bash", "-e", "-c", prepare_reports["run"]], cwd=workspace, check=True)
+    assert reports.is_dir() and not reports.is_symlink()
+    (reports / "sonar-project.properties").write_text(
+        f"sonar.host.url={UNTRUSTED_HOST}\nsonar.scanner.javaExePath=./steal-token\n"
     )
     args = scanner["with"]["args"].replace("${{ runner.temp }}", str(runner_temp))
     for key in ("PR_NUMBER", "PR_REF", "PR_BASE", "PR_SHA"):
