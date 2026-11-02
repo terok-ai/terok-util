@@ -11,7 +11,12 @@ from unittest.mock import patch
 
 import pytest
 
-from terok_util.podman import _version_for_executable, podman_pull_always_args, podman_userns_args
+from terok_util.podman import (
+    _version_for_executable,
+    podman_hosts_file_args,
+    podman_pull_always_args,
+    podman_userns_args,
+)
 
 pytestmark = pytest.mark.usefixtures("host_podman")
 
@@ -131,3 +136,34 @@ class TestPodmanPullAlwaysArgs:
     def test_probe_failure_assumes_modern(self, _run) -> None:
         """A missing podman falls back to the policy form — its own error surfaces later."""
         assert podman_pull_always_args() == ["--pull=always"]
+
+
+class TestPodmanHostsFileArgs:
+    """``podman_hosts_file_args`` passes the base through on podman that has the flag."""
+
+    @pytest.mark.parametrize("version", ["5.4.0", "5.8.1", "6.0.0"])
+    def test_supported_podman_gets_the_flag(self, version: str) -> None:
+        """Podman 5.4 and later receive the base unchanged."""
+        with patch("terok_util.podman.subprocess.run", return_value=_probe_result(version)):
+            assert podman_hosts_file_args("none") == ["--hosts-file", "none"]
+
+    def test_base_is_passed_verbatim(self) -> None:
+        """Any operator-chosen value reaches podman unchanged."""
+        with patch("terok_util.podman.subprocess.run", return_value=_probe_result("5.4.0")):
+            assert podman_hosts_file_args("/etc/hosts") == ["--hosts-file", "/etc/hosts"]
+
+    @pytest.mark.parametrize(
+        "probe",
+        [{"return_value": _probe_result("noise")}, {"side_effect": FileNotFoundError("podman")}],
+        ids=["unparseable", "missing"],
+    )
+    def test_failed_probe_keeps_the_flag(self, probe: dict) -> None:
+        """An unknown version never drops the flag: podman itself reports a real problem."""
+        with patch("terok_util.podman.subprocess.run", **probe):
+            assert podman_hosts_file_args("none") == ["--hosts-file", "none"]
+
+    def test_older_podman_gets_no_flag_and_a_notice(self, capsys) -> None:
+        """Podman 5.3 would reject the flag, so the operator gets a notice instead."""
+        with patch("terok_util.podman.subprocess.run", return_value=_probe_result("5.3.2")):
+            assert podman_hosts_file_args("none") == []
+        assert "/etc/hosts" in capsys.readouterr().err

@@ -38,7 +38,7 @@ otherwise be duplicated (or quietly diverge) across
 | `paths` | `namespace_state_dir`, `namespace_config_dir`, `namespace_runtime_dir` — XDG-aware path resolution for a per-namespace deployment. |
 | `config_stack` | `ConfigStack` + `deep_merge` — layered round-trip YAML config merge engine. |
 | `security` | `sanitize_tty` — strips C0 / C1 / ANSI sequences from untrusted strings before rendering to the operator's terminal (CWE-150 mitigation). |
-| `podman` | `podman_userns_args` — rootless `--userns=keep-id:uid=1000,gid=1000` builder. |
+| `podman` | `podman_userns_args` — rootless `--userns=keep-id:uid=1000,gid=1000` builder; `podman_hosts_file_args` — base of the container's `/etc/hosts`. |
 
 ## Installation
 

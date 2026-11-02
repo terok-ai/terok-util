@@ -54,7 +54,8 @@ What lives here, by module:
   ([`confine_filesystem`][terok_util.hardening.confine_filesystem]).
 * [`podman`][terok_util.podman] — version-aware podman argument spelling
   ([`podman_userns_args`][terok_util.podman.podman_userns_args],
-  [`podman_pull_always_args`][terok_util.podman.podman_pull_always_args]).
+  [`podman_pull_always_args`][terok_util.podman.podman_pull_always_args],
+  [`podman_hosts_file_args`][terok_util.podman.podman_hosts_file_args]).
 * [`matrix`][terok_util.matrix] — the shared multi-distro test-matrix
   engine behind the ``terok-matrix`` CLI; consuming repos declare their
   matrix in ``tests/containers/matrix.yml``
@@ -107,7 +108,7 @@ from .paths import (
 )
 
 # ── Podman helpers ────────────────────────────────────────────────
-from .podman import podman_pull_always_args, podman_userns_args
+from .podman import podman_hosts_file_args, podman_pull_always_args, podman_userns_args
 
 # ── Untrusted-string sanitisation ─────────────────────────────────
 from .security import sanitize_tty
@@ -164,6 +165,7 @@ __all__ = [
     "namespace_config_dir",
     "namespace_runtime_dir",
     "namespace_state_dir",
+    "podman_hosts_file_args",
     "podman_pull_always_args",
     "podman_userns_args",
     "python_identity",
