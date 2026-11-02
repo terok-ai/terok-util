@@ -35,7 +35,7 @@ otherwise be duplicated (or quietly diverge) across
 |---|---|
 | `cli_types` | `CommandDef` / `ArgDef` / `CommandTree` — argparse-driven CLI registry types used by every sibling that exposes a CLI tree. |
 | `fs` | `ensure_dir`, `ensure_dir_writable`, `write_sensitive_file` (atomic `O_CREAT \| O_EXCL` 0o600 writer). |
-| `untrusted_fs` | Bounded `read_untrusted_text` / `read_untrusted_bytes`, fresh-inode `write_untrusted_text` / `write_untrusted_bytes`, `open_untrusted_directory`, and `untrusted_file_lock`. Refuse links and special files in task-writable paths. |
+| `untrusted_fs` | Bounded `read_untrusted_text` / `read_untrusted_bytes`, fresh-inode `write_untrusted_text` / `write_untrusted_bytes`, `remove_untrusted_file`, `open_untrusted_directory`, and `untrusted_file_lock`. Refuse links and special files in task-writable paths. |
 | `paths` | `namespace_state_dir`, `namespace_config_dir`, `namespace_runtime_dir` — XDG-aware path resolution for a per-namespace deployment. |
 | `config_stack` | `ConfigStack` + `deep_merge` — layered round-trip YAML config merge engine. |
 | `security` | `sanitize_tty` — strips C0 / C1 / ANSI sequences from untrusted strings before rendering to the operator's terminal (CWE-150 mitigation). |

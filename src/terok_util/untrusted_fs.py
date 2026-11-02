@@ -105,6 +105,21 @@ def untrusted_file_lock(path: Path) -> Iterator[None]:
             os.close(fd)
 
 
+def remove_untrusted_file(path: Path, *, missing_ok: bool = True) -> None:
+    """Unlink a plain leaf through its pinned parent, never through an ancestor link.
+
+    An observed symlink, hardlink or special file is refused. With
+    *missing_ok*, an absent parent or leaf is already the requested result.
+    """
+    try:
+        with open_untrusted_directory(path.parent) as parent:
+            _check_destination(parent, path)
+            os.unlink(path.name, dir_fd=parent)
+    except FileNotFoundError:
+        if not missing_ok:
+            raise
+
+
 @contextlib.contextmanager
 def open_untrusted_directory(path: Path, *, create: bool = False) -> Iterator[int]:
     """Hold a directory descriptor reached without following any ancestor link.
@@ -177,6 +192,7 @@ __all__ = [
     "open_untrusted_directory",
     "read_untrusted_bytes",
     "read_untrusted_text",
+    "remove_untrusted_file",
     "untrusted_file_lock",
     "write_untrusted_bytes",
     "write_untrusted_text",

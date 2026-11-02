@@ -14,6 +14,7 @@ from terok_util import (
     open_untrusted_directory,
     read_untrusted_bytes,
     read_untrusted_text,
+    remove_untrusted_file,
     untrusted_file_lock,
     write_untrusted_bytes,
     write_untrusted_text,
@@ -35,7 +36,7 @@ def test_round_trip_creates_private_parents_and_replaces_inode(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo", "directory"])
-@pytest.mark.parametrize("operation", ["read", "write", "lock"])
+@pytest.mark.parametrize("operation", ["read", "write", "remove", "lock"])
 def test_unsafe_leaf_is_refused(tmp_path: Path, kind: str, operation: str) -> None:
     """No operation follows a linked leaf or waits on a special file."""
     outside = tmp_path / "outside"
@@ -54,6 +55,8 @@ def test_unsafe_leaf_is_refused(tmp_path: Path, kind: str, operation: str) -> No
             read_untrusted_bytes(path, max_bytes=100)
         elif operation == "write":
             write_untrusted_bytes(path, b"changed")
+        elif operation == "remove":
+            remove_untrusted_file(path)
         else:
             with untrusted_file_lock(path):
                 pytest.fail("unsafe lock was acquired")
@@ -61,7 +64,7 @@ def test_unsafe_leaf_is_refused(tmp_path: Path, kind: str, operation: str) -> No
 
 
 @pytest.mark.parametrize("depth", [0, 1])
-@pytest.mark.parametrize("operation", ["read", "write", "lock"])
+@pytest.mark.parametrize("operation", ["read", "write", "remove", "lock"])
 def test_ancestor_symlink_is_refused(tmp_path: Path, depth: int, operation: str) -> None:
     """Every ancestor, not just the immediate parent, must be a directory."""
     outside = tmp_path / "outside"
@@ -75,6 +78,8 @@ def test_ancestor_symlink_is_refused(tmp_path: Path, depth: int, operation: str)
             read_untrusted_text(path, max_bytes=100)
         elif operation == "write":
             write_untrusted_text(path, "changed")
+        elif operation == "remove":
+            remove_untrusted_file(path)
         else:
             with untrusted_file_lock(path):
                 pytest.fail("unsafe lock was acquired")
@@ -177,3 +182,15 @@ def test_directory_context_and_lock(tmp_path: Path, monkeypatch) -> None:
     lock.write_text("keep")
     with untrusted_file_lock(lock):
         assert lock.read_text() == "keep"
+
+
+def test_remove_plain_file_and_missing_paths(tmp_path: Path) -> None:
+    """Removal is idempotent unless the caller explicitly requires an existing file."""
+    path = tmp_path / "missing" / "file"
+    remove_untrusted_file(path)
+    write_untrusted_text(path, "value")
+    remove_untrusted_file(path)
+    assert not path.exists()
+    remove_untrusted_file(path)
+    with pytest.raises(FileNotFoundError):
+        remove_untrusted_file(path, missing_ok=False)
