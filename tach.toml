@@ -34,7 +34,7 @@ depends_on = []
 [[modules]]
 path = "terok_util.setup"
 layer = "foundation"
-depends_on = ["terok_util.paths"]
+depends_on = ["terok_util.paths", "terok_util.fs"]
 
 # CLI registry types (CommandDef / ArgDef / CommandTree) shared by
 # every sibling that builds a CLI tree.

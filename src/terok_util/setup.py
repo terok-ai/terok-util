@@ -19,6 +19,7 @@ from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
 
+from .fs import ensure_dir
 from .paths import _platform_state_base
 
 _setup_mutex = threading.RLock()
@@ -47,7 +48,7 @@ def setup_lock() -> Iterator[None]:
             return
         # Global hooks share one lock even across runtime sessions and state-root overrides.
         path = _platform_state_base() / _SETUP_LOCK_NAME
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        ensure_dir(path.parent, mode=0o700)
         descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
             try:
@@ -147,7 +148,7 @@ class SetupReceipt:
         if not _valid_receipt(receipt):
             raise ValueError("Setup receipt requires a string owner, version, and inputs")
         Version(self.version)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_dir(self.path.parent)
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=self.path.parent, delete=False
         ) as stream:

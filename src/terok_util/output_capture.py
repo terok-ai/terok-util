@@ -33,6 +33,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Protocol
 
+from .fs import ensure_dir
 from .journal import JournalWriter, journald_available
 
 _READ_CHUNK = 65536
@@ -63,7 +64,7 @@ class _FileStreamSink:
 
     def __init__(self, path: Path) -> None:
         """Create (truncating) the log file at *path*."""
-        path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_dir(path.parent)
         self._path = path
         self._fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _LOG_FILE_MODE)
 
