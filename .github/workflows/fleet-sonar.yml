@@ -7,7 +7,7 @@
 # which gates the master Pages deploy).
 #
 # Nothing here varies per repo — the project key and report paths come
-# from the caller's checked-out sonar-project.properties — so the whole
+# from the caller's trusted base-branch sonar-project.properties — so the whole
 # interface is one secret.  A consumer repo's sonar.yml is a thin caller:
 #
 #   on:
@@ -57,10 +57,28 @@ jobs:
            && github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout trusted scanner settings
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: sonar-trusted
+          persist-credentials: false
+
+      - name: Preserve trusted scanner settings
+        run: |
+          mkdir -p "$RUNNER_TEMP/terok-sonar"
+          cp -- sonar-trusted/sonar-project.properties "$RUNNER_TEMP/terok-sonar/sonar-project.properties"
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Prepare report directory
+        run: |
+          rm -rf -- reports
+          mkdir -- reports
 
       - name: Wait for Tests & Analysis on this commit
         uses: actions/github-script@v9
@@ -123,3 +141,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dproject.settings=${{ runner.temp }}/terok-sonar/sonar-project.properties
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.scanner.apiBaseUrl=https://api.sonarcloud.io

@@ -51,6 +51,19 @@ jobs:
     if: github.repository_owner == 'terok-ai' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout trusted scanner settings
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.repository.default_branch }}
+          path: sonar-trusted
+          persist-credentials: false
+
+      - name: Preserve trusted scanner settings
+        run: |
+          mkdir -p "$RUNNER_TEMP/terok-sonar"
+          cp -- sonar-trusted/sonar-project.properties "$RUNNER_TEMP/terok-sonar/sonar-project.properties"
+
       - uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
@@ -99,6 +112,11 @@ jobs:
           # comment documents the mitigations.
           allow-unsafe-pr-checkout: true
 
+      - name: Prepare report directory
+        run: |
+          rm -rf -- reports
+          mkdir -- reports
+
       - uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
@@ -127,6 +145,9 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
+            -Dproject.settings=${{ runner.temp }}/terok-sonar/sonar-project.properties
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.scanner.apiBaseUrl=https://api.sonarcloud.io
             -Dsonar.pullrequest.key=${{ env.PR_NUMBER }}
             -Dsonar.pullrequest.branch=${{ env.PR_REF }}
             -Dsonar.pullrequest.base=${{ env.PR_BASE }}

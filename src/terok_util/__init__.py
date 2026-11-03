@@ -47,6 +47,9 @@ What lives here, by module:
   [`deep_merge`][terok_util.config_stack.deep_merge]).
 * [`security`][terok_util.security] — untrusted-string TTY sanitiser
   ([`sanitize_tty`][terok_util.security.sanitize_tty]).
+* [`untrusted_fs`][terok_util.untrusted_fs] — bounded reads and fresh-inode
+  replacement for files in task-writable directories. Operator-owned config
+  continues to use [`fs`][terok_util.fs].
 * [`hardening`][terok_util.hardening] — process self-hardening floor
   ([`harden_self`][terok_util.hardening.harden_self],
   [`HardeningReport`][terok_util.hardening.HardeningReport]) and the companion
@@ -126,6 +129,16 @@ from .setup import (
     setup_lock,
     setup_status,
 )
+from .untrusted_fs import (
+    UnsafePathError,
+    open_untrusted_directory,
+    read_untrusted_bytes,
+    read_untrusted_text,
+    remove_untrusted_file,
+    untrusted_file_lock,
+    write_untrusted_bytes,
+    write_untrusted_text,
+)
 
 # The round-trip YAML facade is reached as the ``terok_util.yaml`` submodule
 # (``from terok_util.yaml import load, dump``) rather than flattened here.
@@ -149,6 +162,7 @@ __all__ = [
     "SetupReceipt",
     "SetupRequiredError",
     "SetupStatus",
+    "UnsafePathError",
     "configure",
     "confine_filesystem",
     "deep_merge",
@@ -179,4 +193,11 @@ __all__ = [
     "setup_status",
     "write_config_file",
     "write_sensitive_file",
+    "open_untrusted_directory",
+    "read_untrusted_bytes",
+    "read_untrusted_text",
+    "remove_untrusted_file",
+    "untrusted_file_lock",
+    "write_untrusted_bytes",
+    "write_untrusted_text",
 ]

@@ -49,6 +49,11 @@ path = "terok_util.fs"
 layer = "foundation"
 depends_on = []
 
+[[modules]]
+path = "terok_util.untrusted_fs"
+layer = "foundation"
+depends_on = []
+
 # Namespace path resolvers (state / config / runtime) — XDG-aware,
 # root-detection-aware.  Imports ``platformdirs``.  Lazy-depends on
 # ``config_stack`` for the ``paths.root`` override read from
