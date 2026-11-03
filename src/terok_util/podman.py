@@ -4,8 +4,9 @@
 """Podman helpers shared by the terok packages.
 
 Exposes helpers that spell podman arguments correctly for the host's
-podman release: user-namespace mapping for rootless invocations and the
-force-pull flag for image builds.
+podman release: user-namespace mapping for rootless invocations, the
+force-pull flag for image builds, and the base of a container's
+``/etc/hosts``.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import functools
 import os
 import subprocess  # nosec B404
+import sys
 
 from .host_tools import require_host_tool
 
@@ -21,6 +23,9 @@ _KEEP_ID_UID_MIN = (4, 3)
 
 _PULL_POLICY_MIN = (4, 0)
 """First podman release whose ``build --pull`` accepts a policy string."""
+
+_HOSTS_FILE_MIN = (5, 4)
+"""First podman release whose ``run`` accepts ``--hosts-file``."""
 
 _DEV_ID = 1000
 """UID/GID of the conventional ``dev`` user in terok container images."""
@@ -67,6 +72,23 @@ def podman_pull_always_args() -> list[str]:
     return ["--pull-always"]
 
 
+def podman_hosts_file_args(base: str) -> list[str]:
+    """Return the ``podman run`` flags that set the base of the container's ``/etc/hosts``.
+
+    Podman builds that file from a base file.  Its default base is the
+    host's ``/etc/hosts``, which copies private host names into the
+    container.  Podman older than 5.4 has no way to change the base per
+    container: this returns no flags there, and tells the operator.
+
+    Args:
+        base: A ``--hosts-file`` value: ``none``, ``image``, or an absolute host path.
+    """
+    if _podman_version() < _HOSTS_FILE_MIN:
+        print("Podman is older than 5.4: containers copy the host's /etc/hosts.", file=sys.stderr)
+        return []
+    return ["--hosts-file", base]
+
+
 def _podman_version() -> tuple[int, int]:
     """Version of the currently selected host Podman as ``(major, minor)``.
 
@@ -77,7 +99,7 @@ def _podman_version() -> tuple[int, int]:
     try:
         return _version_for_executable(require_host_tool("podman"))
     except (OSError, subprocess.SubprocessError, ValueError):
-        return _KEEP_ID_UID_MIN
+        return _HOSTS_FILE_MIN
 
 
 @functools.cache
@@ -94,4 +116,4 @@ def _version_for_executable(binary: str) -> tuple[int, int]:
     return (int(major), int(minor))
 
 
-__all__ = ["podman_pull_always_args", "podman_userns_args"]
+__all__ = ["podman_hosts_file_args", "podman_pull_always_args", "podman_userns_args"]
