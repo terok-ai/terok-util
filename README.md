@@ -86,13 +86,15 @@ own writable `/results` directory; no slot receives another slot's results or
 the host scratch directory. Result reads reject symlinks (including parent
 directories), special files, invalid UTF-8, and oversized files. Output is
 streamed in bounded chunks even when a workload never prints a newline.
+Host aliases through the checkout root and temporary workspace are resolved
+before reading; links inside either tree remain forbidden.
 
 Matrix declarations require their declared scalar types, not string coercion.
 They are limited to 64 KiB, 4096 YAML events and 16 collection levels; aliases
 are rejected. Declarations and optional Containerfile fragments must be regular
-files without symlinks in their paths. Fragments are limited to 1 MiB. Image
-prefixes are simple lowercase names; extra packages are individual package
-tokens, not package-manager flags.
+files without symlinks in their repository paths. Fragments are limited to
+1 MiB. Image prefixes are simple lowercase names; extra packages are individual
+package tokens, not package-manager flags.
 
 These are file-handling protections, **not a hostile-code sandbox**. Repository
 phases and Containerfile fragments still execute code. `--krun` selects the test

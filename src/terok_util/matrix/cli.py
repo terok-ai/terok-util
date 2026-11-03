@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     if config.host_confines_pasta:
         print(_pasta_warning())
     with tempfile.TemporaryDirectory(prefix="terok-matrix-") as scratch:
-        results_dir = Path(scratch)
+        results_dir = Path(scratch).resolve()
         previous = signal.signal(signal.SIGTERM, _interrupt_on_sigterm)
         try:
             return _run_matrix(config, targets, args, results_dir)

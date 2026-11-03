@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from io import StringIO
 from pathlib import Path
@@ -17,6 +18,96 @@ from terok_util.matrix import _files, cli, config, runner
 from terok_util.matrix._files import read_regular, slot_output_dir
 from terok_util.matrix.catalog import INPUTS_MOUNT, RESULTS_MOUNT, SYSTEMD_CONTROL_DIR
 from unit.matrix_fixtures import load_fixture, minimal_yml, write_config
+
+
+@pytest.mark.parametrize("relative", [False, True])
+@pytest.mark.parametrize("link_checkout", [False, True])
+def test_declaration_accepts_linked_checkout_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: bool, link_checkout: bool
+) -> None:
+    """Host path aliases resolve before the repository's no-follow boundary starts."""
+    root = tmp_path / "real" / "repo"
+    path = write_config(root, minimal_yml())
+    alias = tmp_path / "alias"
+    target = root if link_checkout else root.parent
+    alias.symlink_to(target, target_is_directory=True)
+    requested = alias / path.relative_to(target)
+    if relative:
+        monkeypatch.chdir(tmp_path)
+        requested = requested.relative_to(tmp_path)
+    declaration = config.load_config(requested)
+    assert declaration.repo_root == root
+    assert declaration.containers_dir == path.parent
+    fragments = path.parent / "fragments"
+    fragments.mkdir()
+    fragment = "RUN echo regular-fragment\n"
+    (fragments / "Containerfile.debian13").write_text(fragment)
+    assert runner.render_containerfile(declaration, "debian13").endswith(fragment)
+
+
+@pytest.mark.parametrize(
+    "filename", ["matrix.yml", "config/matrix.yml", "tests/containers/matrix.yml"]
+)
+def test_relative_declaration_keeps_its_inferred_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str
+) -> None:
+    """Canonicalizing host prefixes preserves shallow and conventional config layouts."""
+    monkeypatch.chdir(tmp_path)
+    path = Path(filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(minimal_yml())
+    declaration = config.load_config(path)
+    assert declaration.repo_root == tmp_path
+    assert declaration.containers_dir == tmp_path / path.parent
+
+
+@pytest.mark.parametrize("component", ["tests", "containers"])
+def test_declaration_rejects_linked_directories_inside_checkout(
+    tmp_path: Path, component: str
+) -> None:
+    """Canonicalizing the host root must not follow repository-controlled parent links."""
+    root = tmp_path / "repo"
+    path = write_config(root, minimal_yml())
+    directory = root / "tests" if component == "tests" else path.parent
+    outside = tmp_path / "outside"
+    directory.rename(outside)
+    directory.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(config.MatrixConfigError, match="cannot read"):
+        config.load_config(path)
+
+
+def test_cli_reads_results_under_linked_temporary_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_podman: Path
+) -> None:
+    """A host TMPDIR alias does not erase version/skips or fail a completed booted slot."""
+    temporary = tmp_path / "temporary"
+    temporary.mkdir()
+    alias = tmp_path / "tmpdir"
+    alias.symlink_to(temporary, target_is_directory=True)
+    monkeypatch.setattr(cli.tempfile, "tempdir", str(alias))
+    monkeypatch.setattr(cli, "_host_confines_pasta", lambda: False)
+    monkeypatch.setattr(cli, "_warn_kernel_keyring", lambda: None)
+    monkeypatch.setattr(runner, "_stream", lambda *a, **k: (0, None))
+
+    def run_matrix(declaration, targets, args, workspace):
+        output = slot_output_dir(workspace, "debian13")
+        output.mkdir(parents=True)
+        skips = {"matrix": {"unavailable": 2}, "pytest": {}}
+        (output / "debian13.skips.json").write_text(json.dumps(skips))
+        (output / "debian13.podman-version").write_text("5.4.2")
+        (output / "debian13.exit").write_text("0")
+        assert runner._observed_version("debian13", workspace) == "5.4.2"
+        assert cli._read_slot_skips(workspace, "debian13") == skips
+        assert runner._run_in_booted_slot(declaration, "debian13", workspace, "")[0] == 0
+        assert workspace.parent == temporary
+        return 0
+
+    run = Mock(side_effect=run_matrix)
+    monkeypatch.setattr(cli, "_run_matrix", run)
+    path = write_config(tmp_path / "repo", minimal_yml())
+    assert cli.main(["--config", str(path)]) == 0
+    run.assert_called_once()
+    assert not list(temporary.iterdir())
 
 
 @pytest.mark.parametrize("kind", ["symlink", "parent-link", "fifo", "directory", "large", "binary"])

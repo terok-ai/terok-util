@@ -150,13 +150,17 @@ def load_config(path: Path) -> MatrixConfig:
 
     Args:
         path: The config file; its grandparent directory is taken as the
-            repo root (``<root>/tests/containers/matrix.yml``).
+            repo root (``<root>/tests/containers/matrix.yml``). Host aliases
+            through that root are resolved; repository paths must not be links.
 
     Raises:
         MatrixConfigError: On unknown keys, unknown slots, or a phase that
             is neither a command phase nor a pytest phase.
     """
     try:
+        root = path.parent.parent.parent
+        repo_root = root.resolve()
+        path = repo_root / path.relative_to(root)
         text = read_regular(path, _MAX_DECLARATION_BYTES)
         _validate_yaml_structure(text)
         raw = yaml_load(text)
@@ -176,8 +180,8 @@ def load_config(path: Path) -> MatrixConfig:
         expect=data.strings("expect", default=()),
         slots=_parse_slots(data.mapping("slots"), where=str(path)),
         phases=_parse_phases(data.list_of_maps("phases"), where=str(path)),
-        containers_dir=path.parent.resolve(),
-        repo_root=path.parent.parent.parent.resolve(),
+        containers_dir=path.parent,
+        repo_root=repo_root,
     )
     data.reject_leftovers()
     if not _IMAGE_PREFIX.fullmatch(config.image_prefix):
