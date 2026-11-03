@@ -29,6 +29,7 @@ from enum import StrEnum
 SOURCE_MOUNT = "/src"
 WORKSPACE_DIR = "/workspace"
 RESULTS_MOUNT = "/results"
+INPUTS_MOUNT = "/matrix-inputs"
 PYTHON_VERSION = "3.12"
 
 # Ownership label baked into every image layer so teardown can prune

@@ -80,7 +80,7 @@ def test_defaults_for_minimal_config(tmp_path: Path) -> None:
         ),
         (
             "image-prefix: t\nflavor: podman\nslots:\n  debian13:\n"
-            "phases:\n  - name: both\n    pytest: tests/\n    run: [true]\n",
+            "phases:\n  - name: both\n    pytest: tests/\n    run: ['true']\n",
             "exactly one of",
         ),
         (
@@ -101,7 +101,7 @@ def test_defaults_for_minimal_config(tmp_path: Path) -> None:
         ("[not, a, mapping]", "mapping at top level"),
         (
             "image-prefix: t\nflavor: podman\nslots:\n  debian13:\n"
-            'phases:\n  - name: d\n    run: [true]\n    tolerate-failure: "no"\n',
+            'phases:\n  - name: d\n    run: ["true"]\n    tolerate-failure: "no"\n',
             "must be a boolean",
         ),
     ],

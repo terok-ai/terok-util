@@ -66,7 +66,9 @@ def test_publishes_progress_and_preserves_skip_counts(engine, monkeypatch):
 
     def run(config, name, scratch, **kwargs):
         assert json.loads(path.read_text())["slots"][name]["state"] == "testing"
-        (scratch / f"{name}.skips.json").write_text(
+        output = scratch / "outputs" / name
+        output.mkdir(parents=True)
+        (output / f"{name}.skips.json").write_text(
             json.dumps({"matrix": {"no KVM": 2}, "pytest": {}})
         )
         return SlotResult(True, "5.4.2")

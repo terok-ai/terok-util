@@ -16,13 +16,24 @@ not running.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from terok_util.yaml import load as yaml_load
+from ruamel.yaml import YAML
+from ruamel.yaml.events import AliasEvent, CollectionEndEvent, CollectionStartEvent
 
+from terok_util.yaml import YAMLError, load as yaml_load
+
+from ._files import read_regular
 from .catalog import FLAVORS, SLOTS
+
+_MAX_DECLARATION_BYTES = 64 * 1024
+_MAX_YAML_EVENTS = 4096
+_MAX_YAML_DEPTH = 16
+_IMAGE_PREFIX = re.compile(r"[a-z0-9][a-z0-9_.-]{0,127}")
+_PACKAGE_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+_.:@=~<>-]*")
 
 
 class MatrixConfigError(ValueError):
@@ -139,13 +150,22 @@ def load_config(path: Path) -> MatrixConfig:
 
     Args:
         path: The config file; its grandparent directory is taken as the
-            repo root (``<root>/tests/containers/matrix.yml``).
+            repo root (``<root>/tests/containers/matrix.yml``). Host aliases
+            through that root are resolved; repository paths must not be links.
 
     Raises:
         MatrixConfigError: On unknown keys, unknown slots, or a phase that
             is neither a command phase nor a pytest phase.
     """
-    raw = yaml_load(path.read_text(encoding="utf-8"))
+    try:
+        root = path.parent.parent.parent
+        repo_root = root.resolve()
+        path = repo_root / path.relative_to(root)
+        text = read_regular(path, _MAX_DECLARATION_BYTES)
+        _validate_yaml_structure(text)
+        raw = yaml_load(text)
+    except (OSError, UnicodeError, YAMLError) as error:
+        raise MatrixConfigError(f"{path}: cannot read matrix declaration: {error}") from error
     if not isinstance(raw, dict):
         raise MatrixConfigError(f"{path}: expected a YAML mapping at top level")
 
@@ -160,14 +180,32 @@ def load_config(path: Path) -> MatrixConfig:
         expect=data.strings("expect", default=()),
         slots=_parse_slots(data.mapping("slots"), where=str(path)),
         phases=_parse_phases(data.list_of_maps("phases"), where=str(path)),
-        containers_dir=path.parent.resolve(),
-        repo_root=path.parent.parent.parent.resolve(),
+        containers_dir=path.parent,
+        repo_root=repo_root,
     )
     data.reject_leftovers()
+    if not _IMAGE_PREFIX.fullmatch(config.image_prefix):
+        raise MatrixConfigError(f"{path}: 'image-prefix' must be a simple lowercase image name")
     return config
 
 
 # ── Parse helpers ──────────────────────────────────────────────────
+
+
+def _validate_yaml_structure(text: str) -> None:
+    """Bound declaration structure before YAML constructs values or alias graphs."""
+    depth = 0
+    for count, event in enumerate(YAML(typ="safe", pure=True).parse(text), start=1):
+        if count > _MAX_YAML_EVENTS:
+            raise MatrixConfigError("Matrix declaration exceeds the YAML event limit")
+        if isinstance(event, AliasEvent):
+            raise MatrixConfigError("Matrix declarations do not allow YAML aliases")
+        if isinstance(event, CollectionStartEvent):
+            depth += 1
+            if depth > _MAX_YAML_DEPTH:
+                raise MatrixConfigError("Matrix declaration exceeds the YAML nesting limit")
+        elif isinstance(event, CollectionEndEvent):
+            depth -= 1
 
 
 def _parse_slots(raw: dict[str, Any], where: str) -> dict[str, SlotConfig]:
@@ -179,6 +217,8 @@ def _parse_slots(raw: dict[str, Any], where: str) -> dict[str, SlotConfig]:
         )
     slots: dict[str, SlotConfig] = {}
     for name, options in raw.items():
+        if options is not None and not isinstance(options, dict):
+            raise MatrixConfigError(f"{where}: slot {name} must be a mapping or null")
         section = _Section(dict(options or {}), where=f"{where}: slot {name}")
         skip = _Section(section.mapping("skip"), where=f"{where}: slot {name}: skip")
         slots[name] = SlotConfig(
@@ -191,6 +231,8 @@ def _parse_slots(raw: dict[str, Any], where: str) -> dict[str, SlotConfig]:
         )
         skip.reject_leftovers()
         section.reject_leftovers()
+        if any(not _PACKAGE_TOKEN.fullmatch(package) for package in slots[name].extra_packages):
+            raise MatrixConfigError(f"{where}: slot {name}: extra-packages must be package tokens")
     return slots
 
 
@@ -238,6 +280,11 @@ class _Section:
     data: dict[str, Any]
     where: str = ""
 
+    def __post_init__(self) -> None:
+        """Reject structured or non-string keys before formatting diagnostics."""
+        if any(not isinstance(key, str) for key in self.data):
+            raise MatrixConfigError(f"{self.where}: mapping keys must be strings")
+
     def string(self, key: str, default: str | None = None) -> str:
         """Pop a string value; required when no default is given."""
         value = self.data.pop(key, _MISSING)
@@ -245,7 +292,9 @@ class _Section:
             if default is None:
                 raise MatrixConfigError(f"{self.where}: missing required key '{key}'")
             return default
-        return str(value)
+        if not isinstance(value, str):
+            raise MatrixConfigError(f"{self.where}: '{key}' must be a string")
+        return value
 
     def strings(self, key: str, default: tuple[str, ...]) -> tuple[str, ...]:
         """Pop a list-of-strings value."""
@@ -259,7 +308,9 @@ class _Section:
             return None
         if not isinstance(value, list):
             raise MatrixConfigError(f"{self.where}: '{key}' must be a list")
-        return tuple(str(item) for item in value)
+        if any(not isinstance(item, str) for item in value):
+            raise MatrixConfigError(f"{self.where}: '{key}' must be a list of strings")
+        return tuple(value)
 
     def boolean(self, key: str, default: bool) -> bool:
         """Pop a boolean value - a quoted "false" must not sneak in as truthy."""
@@ -272,14 +323,18 @@ class _Section:
 
     def mapping(self, key: str) -> dict[str, Any]:
         """Pop a nested mapping, empty when absent."""
-        value = self.data.pop(key, None) or {}
+        value = self.data.pop(key, {})
+        if value is None:
+            return {}
         if not isinstance(value, dict):
             raise MatrixConfigError(f"{self.where}: '{key}' must be a mapping")
-        return dict(value)
+        return _Section(dict(value), where=f"{self.where}: {key}").data
 
     def list_of_maps(self, key: str) -> list[dict[str, Any]]:
         """Pop a list of mappings, empty when absent."""
-        value = self.data.pop(key, None) or []
+        value = self.data.pop(key, [])
+        if value is None:
+            return []
         if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
             raise MatrixConfigError(f"{self.where}: '{key}' must be a list of mappings")
         return [dict(item) for item in value]

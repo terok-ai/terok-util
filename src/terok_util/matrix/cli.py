@@ -35,6 +35,7 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
+from ._files import read_regular, slot_output_dir
 from .catalog import SLOTS, SlotKind
 from .config import MatrixConfig, MatrixConfigError, load_config
 from .jobserver import Jobserver
@@ -108,13 +109,8 @@ def main(argv: list[str] | None = None) -> int:
     _warn_kernel_keyring()
     if config.host_confines_pasta:
         print(_pasta_warning())
-    with tempfile.TemporaryDirectory(prefix=f"{config.image_prefix}-matrix-") as scratch:
-        results_dir = Path(scratch)
-        # The container's uid-1000 user (an unknown host subuid) must write
-        # its observed-version files here, so the dir is world-writable -
-        # with the sticky bit, so other host accounts cannot replace the
-        # generated scripts podman is about to execute.
-        results_dir.chmod(0o1777)
+    with tempfile.TemporaryDirectory(prefix="terok-matrix-") as scratch:
+        results_dir = Path(scratch).resolve()
         previous = signal.signal(signal.SIGTERM, _interrupt_on_sigterm)
         try:
             return _run_matrix(config, targets, args, results_dir)
@@ -428,10 +424,10 @@ def _read_slot_skips(results_dir: Path, name: str) -> dict[str, dict[str, int]]:
     mount (see ``matrix_skip_plugin``); this reads the host side.  A
     missing or unreadable file provides no skip counts.
     """
-    path = results_dir / f"{name}.skips.json"
+    path = slot_output_dir(results_dir, name) / f"{name}.skips.json"
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(read_regular(path))
+    except (OSError, ValueError, RecursionError):
         return {}
     if not isinstance(data, dict) or set(data) != {"matrix", "pytest"}:
         return {}

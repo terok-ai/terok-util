@@ -29,8 +29,10 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 from terok_util.host_tools import find_host_tool, require_host_tool
 from terok_util.security import sanitize_tty
 
+from ._files import read_regular, slot_output_dir
 from .catalog import (
     BOOT_TARGET,
+    INPUTS_MOUNT,
     KRUN_PASST_ANNOTATION,
     KRUN_RUNTIME,
     OWNERSHIP_LABEL,
@@ -80,6 +82,10 @@ _NETWORK_ERROR_SIGNATURES = (
     "tls handshake timeout",
 )
 
+_STREAM_CHUNK_CHARS = 64 * 1024
+_STATUS_BYTES = 256
+_VERSION_BYTES = 4096
+
 
 def _network_error_signature(line: str) -> str | None:
     """The sanitized line if it reads as a host network/DNS failure, else ``None``."""
@@ -113,8 +119,10 @@ def render_containerfile(config: MatrixConfig, slot_name: str) -> str:
         uv_python_dir=UV_MANAGED_PYTHON_DIR,
     )
     fragment = config.containers_dir / "fragments" / f"Containerfile.{slot_name}"
-    if fragment.is_file():
-        rendered += "\n" + fragment.read_text(encoding="utf-8")
+    try:
+        rendered += "\n" + read_regular(fragment)
+    except FileNotFoundError:
+        pass
     return rendered
 
 
@@ -161,14 +169,17 @@ def run_slot(
     ships it, a booted microVM whose systemd runs the outer script as a
     service (``_run_in_booted_slot``).
 
-    Output streams through this process line by line (tagged with
-    *line_prefix* when set — live and attributable when several slots run
-    concurrently; each line is one ``write`` so concurrent slots interleave
-    only between lines).  Each line is also scanned for host network/DNS
-    error signatures; on a failing slot the first match becomes the result's
-    ``network_hint``.
+    Output streams in bounded chunks, tagged at line starts with
+    *line_prefix* when set. Ordinary lines remain single writes; oversized
+    lines may interleave with other slots. Chunks are scanned for host
+    network/DNS error signatures; on failure the first match becomes the
+    result's ``network_hint``.
     """
     boots_systemd = _boots_systemd(config, slot_name)
+    output = slot_output_dir(results_dir, slot_name)
+    output.mkdir(parents=True)
+    # The test uid maps to a host subuid; only this slot receives the mount.
+    output.chmod(0o1777)
     _write_scripts(config, slot_name, results_dir, scope, boots_systemd)
     if boots_systemd:
         status, net_hint = _run_in_booted_slot(config, slot_name, results_dir, line_prefix)
@@ -184,7 +195,7 @@ def run_slot(
 def _stream(
     argv: list[str], line_prefix: str, strip: re.Pattern[str] | None = None
 ) -> tuple[int, str | None]:
-    """Run *argv*, echoing every output line as it arrives; both slot shapes use this.
+    """Run *argv*, echoing bounded chunks; both slot shapes use this.
 
     *strip* removes a transport prefix from each line first.  Returns the
     exit status and the first line that read as a host network/DNS failure
@@ -201,12 +212,14 @@ def _stream(
         ) as proc
     ):
         stdout = cast(IO[str], proc.stdout)  # guaranteed non-None by stdout=PIPE
-        for raw in stdout:
-            line = strip.sub("", raw, count=1) if strip else raw
-            sys.stdout.write(f"{line_prefix}{line}")
+        line_start = True
+        while raw := stdout.readline(_STREAM_CHUNK_CHARS):
+            line = strip.sub("", raw, count=1) if strip and line_start else raw
+            sys.stdout.write(f"{line_prefix if line_start else ''}{line}")
             sys.stdout.flush()
             if net_hint is None:
                 net_hint = _network_error_signature(line)
+            line_start = raw.endswith("\n")
         status = proc.wait()
     return status, net_hint
 
@@ -255,7 +268,8 @@ def _boots_systemd(config: MatrixConfig, slot_name: str) -> bool:
             SYSTEM_BUS_SOCKET_UNIT,
         ],
         check=False,
-        capture_output=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     return probe.returncode == 0
 
@@ -278,10 +292,12 @@ def _run_in_booted_slot(
         strip=_KRUN_CONSOLE_PREFIX,
     )
     try:
-        recorded = (results_dir / f"{slot_name}.exit").read_text(encoding="utf-8").strip()
-    except OSError:
+        recorded = read_regular(
+            slot_output_dir(results_dir, slot_name) / f"{slot_name}.exit", _STATUS_BYTES
+        ).strip()
+    except (OSError, UnicodeError):
         recorded = ""
-    if recorded.isdigit():
+    if recorded.isascii() and recorded.isdigit():
         return int(recorded), net_hint
     # The file is written inside the test container - sanitize before it
     # reaches the operator's terminal.  One line: a tagged parallel run tags
@@ -422,9 +438,11 @@ def _write_scripts(
     config: MatrixConfig, slot_name: str, results_dir: Path, scope: str, boots_systemd: bool
 ) -> None:
     """Drop the generated scripts, and a booted slot's units, where the container mounts them."""
-    outer = results_dir / f"outer-{slot_name}.sh"
+    inputs = _inputs_dir(results_dir, slot_name)
+    inputs.mkdir(parents=True)
+    outer = inputs / f"outer-{slot_name}.sh"
     outer.write_text(outer_script(config, slot_name, boots_systemd=boots_systemd), encoding="utf-8")
-    inner = results_dir / f"inner-{slot_name}.sh"
+    inner = inputs / f"inner-{slot_name}.sh"
     inner.write_text(inner_script(config, slot_name, scope), encoding="utf-8")
     if boots_systemd:
         units = _units_dir(results_dir, slot_name)
@@ -438,7 +456,12 @@ def _write_scripts(
 
 def _units_dir(results_dir: Path, slot_name: str) -> Path:
     """Where a booted slot's units wait for the run to mount them."""
-    return results_dir / f"systemd-{slot_name}"
+    return _inputs_dir(results_dir, slot_name) / "systemd"
+
+
+def _inputs_dir(results_dir: Path, slot_name: str) -> Path:
+    """Host-generated scripts and units, never mounted writable by a slot."""
+    return results_dir / "inputs" / slot_name
 
 
 def _container_name(config: MatrixConfig, slot_name: str) -> str:
@@ -447,8 +470,8 @@ def _container_name(config: MatrixConfig, slot_name: str) -> str:
 
 
 def _outer_in_container(slot_name: str) -> str:
-    """The slot's root-side script, as the container sees it on the results mount."""
-    return f"{RESULTS_MOUNT}/outer-{slot_name}.sh"
+    """The slot's root-side script on its read-only input mount."""
+    return f"{INPUTS_MOUNT}/outer-{slot_name}.sh"
 
 
 def _run_argv(
@@ -511,17 +534,14 @@ def _run_argv(
             KRUN_PASST_ANNOTATION,
         ]
     argv += [
-        # ``:z`` (shared label), not ``:Z`` (private): the source and results
-        # dirs are one shared mount across the parallel slots, and ``:Z``
-        # relabels each to a private per-container SELinux category — so on an
-        # enforcing host the dbus-flavor slots (no ``label=disable``) race,
-        # one slot's relabel making another's ``/results/outer-*.sh``
-        # unreadable ("Permission denied").  ``:z`` relabels to a shared type
-        # every slot can read, and the relabel is idempotent, so no race.
+        # The source is shared across slots: private SELinux relabeling
+        # would invalidate the labels of containers already using it.
         "-v",
         f"{config.repo_root}:{SOURCE_MOUNT}:ro,z",
         "-v",
-        f"{results_dir}:{RESULTS_MOUNT}:rw,z",
+        f"{_inputs_dir(results_dir, slot_name)}:{INPUTS_MOUNT}:ro,z",
+        "-v",
+        f"{slot_output_dir(results_dir, slot_name)}:{RESULTS_MOUNT}:rw,z",
     ]
     if boots_systemd:
         argv += ["-v", f"{_units_dir(results_dir, slot_name)}:{SYSTEMD_CONTROL_DIR}:ro,z"]
@@ -540,8 +560,10 @@ def _observed_version(slot_name: str, results_dir: Path) -> str:
     """What the inner script recorded — may be missing if it died early."""
     stem = "python" if SLOTS[slot_name].kind is SlotKind.NIX else "podman"
     try:
-        recorded = (results_dir / f"{slot_name}.{stem}-version").read_text(encoding="utf-8")
-    except OSError:
+        recorded = read_regular(
+            slot_output_dir(results_dir, slot_name) / f"{slot_name}.{stem}-version", _VERSION_BYTES
+        )
+    except (OSError, UnicodeError):
         return "?"
     # The file is written inside the test container - sanitize before it
     # reaches the operator's terminal via the summary.

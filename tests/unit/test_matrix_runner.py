@@ -105,11 +105,11 @@ def test_run_argv_matches_the_flavor_and_kind(tmp_path: Path) -> None:
     assert "--privileged" in podman_argv
     assert "/dev/fuse:rw" in podman_argv
     assert "--init" in podman_argv
-    assert podman_argv[-2:] == ["bash", "/results/outer-debian13.sh"]
-    # ``:z`` (shared SELinux label), not ``:Z``: /src and /results are shared
-    # across parallel slots, so a private label would race (see _run_argv).
+    assert podman_argv[-2:] == ["bash", "/matrix-inputs/outer-debian13.sh"]
+    # The source needs a shared SELinux label across parallel slots.
     assert f"{config.repo_root}:/src:ro,z" in podman_argv
-    assert f"{results}:/results:rw,z" in podman_argv
+    assert f"{results}/inputs/debian13:/matrix-inputs:ro,z" in podman_argv
+    assert f"{results}/outputs/debian13:/results:rw,z" in podman_argv
 
     nix_argv = _run_argv(config, "nix", results)
     assert "--privileged" not in nix_argv
@@ -164,7 +164,7 @@ def test_run_argv_boots_systemd_as_pid1_when_the_runner_says_so(tmp_path: Path) 
     assert "--init" not in booted
     # libkrun's init execs the command instead of forking it, so systemd is PID 1.
     assert booted[booted.index("KRUN_INIT_PID1=1") - 1] == "-e"
-    assert f"{results}/systemd-debian13:{SYSTEMD_CONTROL_DIR}:ro,z" in booted
+    assert f"{results}/inputs/debian13/systemd:{SYSTEMD_CONTROL_DIR}:ro,z" in booted
     assert booted[-4:] == [
         SYSTEMD_INIT,
         f"--unit={BOOT_TARGET}",
@@ -182,7 +182,7 @@ def test_run_argv_boots_systemd_as_pid1_when_the_runner_says_so(tmp_path: Path) 
     plain = _run_argv(krun, "debian13", results)
     assert "--init" in plain
     assert "KRUN_INIT_PID1=1" not in plain
-    assert plain[-2:] == ["bash", "/results/outer-debian13.sh"]
+    assert plain[-2:] == ["bash", "/matrix-inputs/outer-debian13.sh"]
 
 
 def test_krun_outer_starts_the_user_manager_and_proves_systemd_is_pid1(tmp_path: Path) -> None:
@@ -220,7 +220,7 @@ def test_boot_units_run_the_outer_script_and_hand_back_its_status() -> None:
 
     service = units[SLOT_SERVICE]
     # A pipe as the script's stdout, as in the plain shape; the status is the script's.
-    assert '-o pipefail -c "/bin/bash /results/outer-debian13.sh 2>&1 | cat"' in service
+    assert '-o pipefail -c "/bin/bash /matrix-inputs/outer-debian13.sh 2>&1 | cat"' in service
     # The console is what libkrun hands to the container's stdout.
     assert "StandardOutput=tty" in service
     assert '"$$EXIT_STATUS" > /results/debian13.exit' in service

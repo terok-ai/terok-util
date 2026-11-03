@@ -105,7 +105,8 @@ def test_read_slot_skips_reads_the_report(tmp_path: Path) -> None:
     from terok_util.matrix.cli import _read_slot_skips
 
     counts = {"matrix": {"needs_krun": 12}, "pytest": {"missing tool": 6}}
-    (tmp_path / "manjaro.skips.json").write_text(json.dumps(counts))
+    (tmp_path / "outputs" / "manjaro").mkdir(parents=True)
+    (tmp_path / "outputs" / "manjaro" / "manjaro.skips.json").write_text(json.dumps(counts))
     assert _read_slot_skips(tmp_path, "manjaro") == counts
     assert _read_slot_skips(tmp_path, "fedora44") == {}
 
@@ -123,7 +124,8 @@ def test_read_slot_skips_rejects_malformed_counts(tmp_path: Path) -> None:
         '{"matrix": {}}',
         "[1, 2]",
     ):
-        (tmp_path / "bad.skips.json").write_text(bad)
+        (tmp_path / "outputs" / "bad").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "outputs" / "bad" / "bad.skips.json").write_text(bad)
         assert _read_slot_skips(tmp_path, "bad") == {}
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import replace
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -81,21 +82,21 @@ def test_build_image_reports_failure(tmp_path: Path, monkeypatch: pytest.MonkeyP
 def test_run_slot_writes_scripts_and_reads_the_observed_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_podman: Path
 ) -> None:
-    """Scripts land in the results dir; the recorded version comes back."""
+    """Scripts and writable results have separate mounts; the version comes back."""
     config = load_fixture(tmp_path)
     recorded = RecordedPopen([])
     monkeypatch.setattr(runner.subprocess, "Popen", recorded)
     results = tmp_path / "results"
     results.mkdir()
-    (results / "debian13.podman-version").write_text("5.4.2\n", encoding="utf-8")
+    recorded.files[results / "outputs" / "debian13" / "debian13.podman-version"] = "5.4.2\n"
 
     result = runner.run_slot(config, "debian13", results)
 
     assert result.passed
     assert result.observed == "5.4.2"
     assert result.network_hint is None
-    assert (results / "outer-debian13.sh").exists()
-    assert (results / "inner-debian13.sh").exists()
+    assert (results / "inputs" / "debian13" / "outer-debian13.sh").exists()
+    assert (results / "inputs" / "debian13" / "inner-debian13.sh").exists()
     (argv,) = recorded.calls
     assert argv[:2] == [str(host_podman), "run"]
 
@@ -141,7 +142,6 @@ def test_run_slot_does_not_flag_a_network_line_when_it_passes(
     monkeypatch.setattr(runner.subprocess, "Popen", RecordedPopen([blip], returncode=0))
     results = tmp_path / "results"
     results.mkdir()
-    (results / "debian13.podman-version").write_text("5.4.2\n", encoding="utf-8")
 
     assert runner.run_slot(config, "debian13", results).network_hint is None
 
@@ -682,13 +682,14 @@ def test_run_matrix_via_main_uses_a_results_tempdir(
     stubbed_host: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """main() provisions the shared results dir world-writable and cleans up."""
+    """main() provisions a host-only scratch directory and cleans up."""
     seen: list[Path] = []
     original = cli._run_matrix
 
     def spy(config: Any, targets: list[str], args: Any, results_dir: Path) -> int:
         seen.append(results_dir)
         assert results_dir.exists()
+        assert results_dir.stat().st_mode & 0o777 == 0o700
         return original(config, targets, args, results_dir)
 
     monkeypatch.setattr(cli, "_run_matrix", spy)
@@ -750,12 +751,15 @@ class RecordedPopen:
 
     def __init__(self, lines: list[str], returncode: int = 0) -> None:
         self.lines = lines
+        self.files: dict[Path, str] = {}
         self.returncode = returncode
         self.calls: list[list[str]] = []
 
     def __call__(self, argv: list[str], **_kwargs: Any) -> RecordedPopen:
         """Record the argv and hand back self as the process object."""
         self.calls.append(list(argv))
+        for path, text in self.files.items():
+            path.write_text(text, encoding="utf-8")
         return self
 
     def __enter__(self) -> RecordedPopen:
@@ -767,7 +771,7 @@ class RecordedPopen:
     @property
     def stdout(self) -> Any:
         """The scripted output lines, newline-terminated like a real pipe."""
-        return iter(f"{line}\n" for line in self.lines)
+        return StringIO("".join(f"{line}\n" for line in self.lines))
 
     def wait(self) -> int:
         """The scripted exit code."""
@@ -850,9 +854,10 @@ def _booted_slot(
     monkeypatch.setattr(runner.subprocess, "Popen", popen)
     results = tmp_path / "results"
     results.mkdir()
-    (results / "debian13.podman-version").write_text("5.4.2\n", encoding="utf-8")
+    output = results / "outputs" / "debian13"
+    popen.files[output / "debian13.podman-version"] = "5.4.2\n"
     if exit_status is not None:
-        (results / "debian13.exit").write_text(exit_status, encoding="utf-8")
+        popen.files[output / "debian13.exit"] = exit_status
     return config, results, probe, popen
 
 
@@ -883,11 +888,14 @@ def test_booted_slot_is_one_attached_run_with_its_units_in_place(
     (streamed,) = popen.calls
     assert "KRUN_INIT_PID1=1" in streamed
     assert SYSTEMD_INIT in streamed
-    assert (results / "systemd-debian13" / SLOT_SERVICE).is_file()
+    assert (results / "inputs" / "debian13" / "systemd" / SLOT_SERVICE).is_file()
     # nobody answers the console: no first-boot prompt, no login
     for masked in ("systemd-firstboot.service", "console-getty.service"):
-        assert (results / "systemd-debian13" / masked).readlink() == Path(os.devnull)
-    assert "must boot systemd as PID 1" in (results / "outer-debian13.sh").read_text()
+        assert (results / "inputs" / "debian13" / "systemd" / masked).readlink() == Path(os.devnull)
+    assert (
+        "must boot systemd as PID 1"
+        in (results / "inputs" / "debian13" / "outer-debian13.sh").read_text()
+    )
     # the same streaming loop as the plain shape: tagged, line by line
     assert "[debian13] hello" in capsys.readouterr().out
 
@@ -947,9 +955,9 @@ def test_krun_slot_whose_image_ships_no_systemd_runs_the_plain_shape(
 
     assert runner.run_slot(config, "debian13", results).passed
     (streamed,) = popen.calls
-    assert streamed[-2:] == ["bash", "/results/outer-debian13.sh"]
+    assert streamed[-2:] == ["bash", "/matrix-inputs/outer-debian13.sh"]
     assert "KRUN_INIT_PID1=1" not in streamed
-    assert not (results / "systemd-debian13").exists()
+    assert not (results / "inputs" / "debian13" / "systemd").exists()
 
 
 def test_no_image_probe_where_no_systemd_may_boot(
