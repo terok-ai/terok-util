@@ -175,7 +175,7 @@ def config_file_paths() -> list[tuple[str, Path]]:
     """
     env = os.getenv(_TEROK_CONFIG_FILE_ENV)
     if env:
-        return [("override", Path(env).expanduser().resolve())]
+        return [("override", Path(env).expanduser().absolute())]
     prefix = Path(sys.prefix) / _CONFIG_RELATIVE_PATH
     user = namespace_config_dir() / _SYSTEM_CONFIG_FILE.name
     layers = [("system", _SYSTEM_CONFIG_FILE)]

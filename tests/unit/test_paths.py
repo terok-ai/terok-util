@@ -49,15 +49,21 @@ def test_config_layers_keep_the_writable_file_last(
     assert paths.config_file_paths() == expected
 
 
+@pytest.mark.parametrize("symlink", [False, True])
 def test_config_file_override_replaces_all_layers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symlink: bool
 ) -> None:
-    """An explicit file is the only layer, including relative paths."""
+    """An explicit file is absolute but keeps its configured name for diagnostics."""
     from terok_util import paths
 
+    override = tmp_path / "override.yml"
+    if symlink:
+        target = tmp_path / "actual.yml"
+        target.touch()
+        override.symlink_to(target)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("TEROK_CONFIG_FILE", "override.yml")
-    assert paths.config_file_paths() == [("override", tmp_path / "override.yml")]
+    monkeypatch.setenv("TEROK_CONFIG_FILE", override.name)
+    assert paths.config_file_paths() == [("override", override)]
 
 
 class TestNamespaceRoot:
