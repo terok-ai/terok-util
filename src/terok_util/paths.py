@@ -15,9 +15,11 @@ Resolution priority for each resolver:
    ``platformdirs``)
 
 Layered config-file reading (system → installation prefix → user)
-is a sibling-package concern — packages
-that want it compose [`ConfigStack`][terok_util.config_stack.ConfigStack]
-against these resolvers themselves.
+lives here too: [`config_file_paths`][terok_util.paths.config_file_paths]
+names the layers, [`writable_config_path`][terok_util.paths.writable_config_path]
+the one an operator edits, and the ``read_config_*`` helpers merge them.
+Packages that want schema validation compose
+[`ConfigStack`][terok_util.config_stack.ConfigStack] over the same layers.
 """
 
 from __future__ import annotations
@@ -187,12 +189,25 @@ def config_file_paths() -> list[tuple[str, Path]]:
     ]
 
 
+def writable_config_path() -> Path:
+    """The ``config.yml`` an operator edits and every sibling package writes.
+
+    The highest-priority layer of
+    [`config_file_paths`][terok_util.paths.config_file_paths]: the explicit
+    ``TEROK_CONFIG_FILE`` when set, otherwise the user file (the system
+    file for root).  One derivation for every writer, so the path one
+    package writes is the path the others read.
+    """
+    return config_file_paths()[-1][1]
+
+
 def read_config_section(section: str) -> dict[str, str]:
     """Read a top-level section from layered terok configs (cached, fail-silent).
 
-    Merges system and user ``config.yml`` files via
-    [`ConfigStack`][terok_util.config_stack.ConfigStack] — user values
-    override system defaults at the leaf level.  Lazy-imports
+    Merges every layer of
+    [`config_file_paths`][terok_util.paths.config_file_paths] via
+    [`ConfigStack`][terok_util.config_stack.ConfigStack] — higher layers
+    override lower ones at the leaf level.  Lazy-imports
     ``config_stack`` so importing ``paths`` doesn't drag the YAML
     parser into a process that only needs the platform defaults.
     """
@@ -374,4 +389,5 @@ __all__ = [
     "namespace_state_dir",
     "read_config_section",
     "read_config_top_level",
+    "writable_config_path",
 ]

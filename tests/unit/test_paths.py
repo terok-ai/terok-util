@@ -49,6 +49,21 @@ def test_config_layers_keep_the_writable_file_last(
     assert paths.config_file_paths() == expected
 
 
+@pytest.mark.parametrize("override", [False, True])
+def test_writable_config_path_is_the_highest_layer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: bool
+) -> None:
+    """Every writer targets the explicit override, else the operator's user file."""
+    from terok_util import paths
+
+    user = tmp_path / "user" / "config.yml"
+    monkeypatch.setattr(paths, "namespace_config_dir", lambda: user.parent)
+    monkeypatch.chdir(tmp_path)
+    if override:
+        monkeypatch.setenv("TEROK_CONFIG_FILE", "override.yml")
+    assert paths.writable_config_path() == (tmp_path / "override.yml" if override else user)
+
+
 @pytest.mark.parametrize("symlink", [False, True])
 def test_config_file_override_replaces_all_layers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symlink: bool
