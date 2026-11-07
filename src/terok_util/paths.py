@@ -14,16 +14,19 @@ Resolution priority for each resolver:
 3. Platform default (FHS root paths or XDG dirs via
    ``platformdirs``)
 
-Layered config-file reading (``/etc/terok/config.yml`` →
-``~/.config/terok/config.yml``) is a sibling-package concern — packages
-that want it compose [`ConfigStack`][terok_util.config_stack.ConfigStack]
-against these resolvers themselves.
+Layered config-file reading (system → installation prefix → user)
+lives here too: [`config_file_paths`][terok_util.paths.config_file_paths]
+names the layers, [`writable_config_path`][terok_util.paths.writable_config_path]
+the one an operator edits, and the ``read_config_*`` helpers merge them.
+Packages that want schema validation compose
+[`ConfigStack`][terok_util.config_stack.ConfigStack] over the same layers.
 """
 
 from __future__ import annotations
 
 import getpass
 import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -39,6 +42,9 @@ except ImportError:  # optional dependency
 
 _NAMESPACE = "terok"
 
+_CONFIG_RELATIVE_PATH = Path("etc") / _NAMESPACE / "config.yml"
+_SYSTEM_CONFIG_FILE = Path("/") / _CONFIG_RELATIVE_PATH
+
 _TEROK_ROOT_ENV = "TEROK_ROOT"
 """Env var overriding the namespace state root for all ecosystem packages."""
 
@@ -47,7 +53,7 @@ _TEROK_CONFIG_FILE_ENV = "TEROK_CONFIG_FILE"
 
 #: Process-lifetime cache for resolved config sections.  Path resolvers
 #: get called many times during a single CLI invocation; reading and
-#: parsing two YAML files for every call would dominate latency.
+#: parsing YAML files for every call would dominate latency.
 _config_section_cache: dict[str, dict[str, str]] = {}
 
 #: Process-lifetime cache for resolved top-level scalar/list reads (e.g.
@@ -161,8 +167,9 @@ def config_file_paths() -> list[tuple[str, Path]]:
     """Ordered config.yml locations with scope labels (lowest → highest priority).
 
     ``TEROK_CONFIG_FILE`` → single override (no layering).  Otherwise:
-    ``/etc/terok/config.yml`` (system) → ``~/.config/terok/config.yml``
-    (user).  Root processes see only the system path.
+    ``/etc/terok/config.yml`` (system) → ``sys.prefix/etc/terok/config.yml``
+    (prefix) → ``~/.config/terok/config.yml`` (user). Root's writable user
+    file is the system file; it appears once, at highest priority.
 
     Public so consumers can render an "edit one of these to override X"
     hint to the operator (which file gets the highest priority, where
@@ -170,25 +177,37 @@ def config_file_paths() -> list[tuple[str, Path]]:
     """
     env = os.getenv(_TEROK_CONFIG_FILE_ENV)
     if env:
-        return [("override", Path(env).expanduser())]
-    result: list[tuple[str, Path]] = [
-        ("system", Path("/etc") / _NAMESPACE / "config.yml"),
+        return [("override", Path(env).expanduser().absolute())]
+    prefix = Path(sys.prefix) / _CONFIG_RELATIVE_PATH
+    user = namespace_config_dir() / _SYSTEM_CONFIG_FILE.name
+    layers = [("system", _SYSTEM_CONFIG_FILE)]
+    if prefix.resolve() != _SYSTEM_CONFIG_FILE.resolve():
+        layers.append(("prefix", prefix))
+    return [
+        *(layer for layer in layers if layer[1].resolve() != user.resolve()),
+        ("user", user),
     ]
-    if not _is_root():
-        if _user_config_dir is not None:
-            user_base = Path(_user_config_dir(_NAMESPACE))
-        else:
-            user_base = Path.home() / ".config" / _NAMESPACE
-        result.append(("user", user_base / "config.yml"))
-    return result
+
+
+def writable_config_path() -> Path:
+    """The ``config.yml`` an operator edits and every sibling package writes.
+
+    The highest-priority layer of
+    [`config_file_paths`][terok_util.paths.config_file_paths]: the explicit
+    ``TEROK_CONFIG_FILE`` when set, otherwise the user file (the system
+    file for root).  One derivation for every writer, so the path one
+    package writes is the path the others read.
+    """
+    return config_file_paths()[-1][1]
 
 
 def read_config_section(section: str) -> dict[str, str]:
     """Read a top-level section from layered terok configs (cached, fail-silent).
 
-    Merges system and user ``config.yml`` files via
-    [`ConfigStack`][terok_util.config_stack.ConfigStack] — user values
-    override system defaults at the leaf level.  Lazy-imports
+    Merges every layer of
+    [`config_file_paths`][terok_util.paths.config_file_paths] via
+    [`ConfigStack`][terok_util.config_stack.ConfigStack] — higher layers
+    override lower ones at the leaf level.  Lazy-imports
     ``config_stack`` so importing ``paths`` doesn't drag the YAML
     parser into a process that only needs the platform defaults.
     """
@@ -370,4 +389,5 @@ __all__ = [
     "namespace_state_dir",
     "read_config_section",
     "read_config_top_level",
+    "writable_config_path",
 ]

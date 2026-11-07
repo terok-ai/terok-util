@@ -38,7 +38,7 @@ otherwise be duplicated (or quietly diverge) across
 | `untrusted_fs` | Bounded `read_untrusted_text` / `read_untrusted_bytes`, fresh-inode `write_untrusted_text` / `write_untrusted_bytes`, `remove_untrusted_file`, `open_untrusted_directory`, and `untrusted_file_lock`. Refuse links and special files in task-writable paths. |
 | `paths` | `namespace_state_dir`, `namespace_config_dir`, `namespace_runtime_dir` — XDG-aware path resolution for a per-namespace deployment. |
 | `config_stack` | `ConfigStack` + `deep_merge` — layered round-trip YAML config merge engine. |
-| `security` | `sanitize_tty` — strips C0 / C1 / ANSI sequences from untrusted strings before rendering to the operator's terminal (CWE-150 mitigation). |
+| `security` | `sanitize_tty` — strips C0 / C1 / ANSI sequences from untrusted strings before rendering to the operator's terminal (CWE-150 mitigation); `sanitize_log_text` — the same for multiline task output, keeping layout and (on a terminal) colour. |
 | `podman` | `podman_userns_args` — rootless `--userns=keep-id:uid=1000,gid=1000` builder; `podman_hosts_file_args` — base of the container's `/etc/hosts`. |
 
 ## Installation

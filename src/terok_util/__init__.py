@@ -45,8 +45,9 @@ What lives here, by module:
 * [`config_stack`][terok_util.config_stack] — layered config merge engine
   ([`ConfigStack`][terok_util.config_stack.ConfigStack],
   [`deep_merge`][terok_util.config_stack.deep_merge]).
-* [`security`][terok_util.security] — untrusted-string TTY sanitiser
-  ([`sanitize_tty`][terok_util.security.sanitize_tty]).
+* [`security`][terok_util.security] — untrusted-string TTY sanitisers
+  ([`sanitize_tty`][terok_util.security.sanitize_tty],
+  [`sanitize_log_text`][terok_util.security.sanitize_log_text]).
 * [`untrusted_fs`][terok_util.untrusted_fs] — bounded reads and fresh-inode
   replacement for files in task-writable directories. Operator-owned config
   continues to use [`fs`][terok_util.fs].
@@ -108,13 +109,14 @@ from .paths import (
     namespace_state_dir,
     read_config_section,
     read_config_top_level,
+    writable_config_path,
 )
 
 # ── Podman helpers ────────────────────────────────────────────────
 from .podman import podman_hosts_file_args, podman_pull_always_args, podman_userns_args
 
 # ── Untrusted-string sanitisation ─────────────────────────────────
-from .security import sanitize_tty
+from .security import sanitize_log_text, sanitize_tty
 
 # ── Package-owned setup receipts ──────────────────────────────────
 from .setup import (
@@ -185,12 +187,14 @@ __all__ = [
     "python_identity",
     "read_config_section",
     "read_config_top_level",
+    "sanitize_log_text",
     "sanitize_tty",
     "require_host_tool",
     "require_no_downgrade",
     "require_setup",
     "setup_lock",
     "setup_status",
+    "writable_config_path",
     "write_config_file",
     "write_sensitive_file",
     "open_untrusted_directory",

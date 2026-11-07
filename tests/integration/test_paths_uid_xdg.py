@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -97,6 +99,13 @@ _needs_uid_map = pytest.mark.skipif(
 
 
 # ── The probe the children run ─────────────────────────────────────────
+
+_PREFIX_CONFIG_FILE = Path(sys.prefix) / "etc" / NAMESPACE / "config.yml"
+_PREFIX_CONFIG_FILES = (
+    []
+    if _PREFIX_CONFIG_FILE.resolve() == (FHS_CONFIG_DIR / "config.yml").resolve()
+    else [str(_PREFIX_CONFIG_FILE)]
+)
 
 _RESOLVE_PROBE = """
 import json, os
@@ -181,8 +190,8 @@ def test_root_lands_on_fhs_paths_and_ignores_xdg(child_json, tmp_path) -> None:
     assert result["config"] == str(FHS_CONFIG_DIR)
     assert result["state"] == str(FHS_STATE_DIR)
     assert result["runtime"] == str(FHS_RUNTIME_DIR)
-    # Root reads the system config file only — no user layer to merge.
-    assert result["config_files"] == [str(FHS_CONFIG_DIR / "config.yml")]
+    # Root's system file overrides any installation-prefix defaults.
+    assert result["config_files"] == [*_PREFIX_CONFIG_FILES, str(FHS_CONFIG_DIR / "config.yml")]
 
 
 @_needs_unprivileged
@@ -213,6 +222,7 @@ def test_unprivileged_honours_the_xdg_chain(child_json, tmp_path) -> None:
     # The user layer is appended above the system one, highest priority last.
     assert result["config_files"] == [
         str(FHS_CONFIG_DIR / "config.yml"),
+        *_PREFIX_CONFIG_FILES,
         str(cfg / NAMESPACE / "config.yml"),
     ]
 

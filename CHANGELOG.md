@@ -14,12 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `writable_config_path()`: the one `config.yml` every package writes, derived once
+  from `config_file_paths()`.
+- `sanitize_log_text()`: terminal-safe multiline task output that keeps line breaks,
+  tabs and, on an interactive terminal, SGR colour.
+
 - `terok-matrix --report PATH`: atomic JSON progress and final results — slot verdicts,
   skip reasons, build failures, observed versions, suspected network failures — and a
   jobserver wait a caller can cancel without closing the shared worker budget
   ([#133](https://github.com/terok-ai/terok-util/pull/133)).
 
 ### Changed
+
+- `config_file_paths()` adds the installation-prefix layer (`sys.prefix/etc/terok/config.yml`)
+  between the system and user files and lists root's single writable file once, last.
 
 - `require_setup` reports an owner whose receipt is missing as `not set up yet`
   instead of listing every absent artifact, and asks to "Run setup" rather than
