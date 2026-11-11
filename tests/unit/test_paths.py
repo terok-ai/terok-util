@@ -25,6 +25,62 @@ MOCK_BASE = Path("/tmp/terok-util-testing")  # nosec B108 - synthetic test-only 
 _NAMESPACE_ROOT = "terok"
 
 
+@pytest.mark.parametrize("root_user", [False, True])
+@pytest.mark.parametrize("system_prefix", [False, True])
+def test_config_layers_keep_the_writable_file_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_user: bool, system_prefix: bool
+) -> None:
+    """Prefix defaults apply once, below the operator's writable configuration."""
+    from terok_util import paths
+
+    system_root = tmp_path / "system"
+    prefix_root = system_root if system_prefix else tmp_path / "prefix"
+    system = system_root / paths._CONFIG_RELATIVE_PATH
+    prefix = prefix_root / paths._CONFIG_RELATIVE_PATH
+    user = system if root_user else tmp_path / "user" / system.name
+    monkeypatch.setattr(paths, "_SYSTEM_CONFIG_FILE", system)
+    monkeypatch.setattr(paths.sys, "prefix", str(prefix_root))
+    monkeypatch.setattr(paths, "namespace_config_dir", lambda: user.parent)
+
+    expected = [] if root_user else [("system", system)]
+    if not system_prefix:
+        expected.append(("prefix", prefix))
+    expected.append(("user", user))
+    assert paths.config_file_paths() == expected
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_writable_config_path_is_the_highest_layer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: bool
+) -> None:
+    """Every writer targets the explicit override, else the operator's user file."""
+    from terok_util import paths
+
+    user = tmp_path / "user" / "config.yml"
+    monkeypatch.setattr(paths, "namespace_config_dir", lambda: user.parent)
+    monkeypatch.chdir(tmp_path)
+    if override:
+        monkeypatch.setenv("TEROK_CONFIG_FILE", "override.yml")
+    assert paths.writable_config_path() == (tmp_path / "override.yml" if override else user)
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_config_file_override_replaces_all_layers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symlink: bool
+) -> None:
+    """An explicit file is absolute but keeps its configured name for diagnostics."""
+    from terok_util import paths
+
+    override = tmp_path / "override.yml"
+    if symlink:
+        target = tmp_path / "actual.yml"
+        target.touch()
+        override.symlink_to(target)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEROK_CONFIG_FILE", override.name)
+    assert paths.config_file_paths() == [("override", override)]
+
+
 class TestNamespaceRoot:
     """``TEROK_ROOT`` env var moves the namespace state root for all subdirs."""
 

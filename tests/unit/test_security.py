@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for [`sanitize_tty`][terok_util.security.sanitize_tty] (CWE-150 mitigation)."""
+"""Tests for the TTY sanitisers in [`terok_util.security`][terok_util.security] (CWE-150 mitigation)."""
 
 from __future__ import annotations
 
 import pytest
 
-from terok_util.security import sanitize_tty
+from terok_util.security import sanitize_log_text, sanitize_tty
 
 
 class TestSanitizeTty:
@@ -78,3 +78,42 @@ class TestSanitizeTty:
         """``& < >`` are printable ASCII — sanitiser is wire-neutral, not HTML-aware."""
         assert sanitize_tty("<script>alert(1)</script>") == "<script>alert(1)</script>"
         assert sanitize_tty("a & b") == "a & b"
+
+
+_HOSTILE = "a\x1b]52;c;cG9pc29u\x07\x9b2Jb"
+_HOSTILE_ESCAPED = "a\\x1b]52;c;cG9pc29u\\x07\\x9b2Jb"
+
+
+class TestSanitizeLogText:
+    """Layout and colour survive for a terminal; every other control becomes visible text."""
+
+    @pytest.mark.parametrize("color", [False, True])
+    def test_layout_is_kept_and_controls_are_escaped(self, color: bool) -> None:
+        text = f"first\tcol\r\n{_HOSTILE}\nlast"
+        assert sanitize_log_text(text, color=color) == f"first\tcol\n{_HOSTILE_ESCAPED}\nlast"
+
+    def test_colour_is_kept_on_a_terminal_and_reset_at_the_end(self) -> None:
+        assert sanitize_log_text("\x1b[1;32mok\x1b[0m plain", color=True) == (
+            "\x1b[1;32mok\x1b[0m plain\x1b[0m"
+        )
+
+    def test_colour_is_stripped_for_a_file(self) -> None:
+        assert sanitize_log_text("\x1b[1;32mok\x1b[0m plain", color=False) == "ok plain"
+
+    def test_only_complete_sgr_sequences_count_as_colour(self) -> None:
+        """A cursor command or a truncated colour sequence is escaped, never rendered."""
+        assert sanitize_log_text("\x1b[2J\x1b[3", color=True) == "\\x1b[2J\\x1b[3"
+
+    def test_lone_carriage_return_and_empty_text(self) -> None:
+        assert sanitize_log_text("10%\r20%", color=True) == "10% 20%"
+        assert sanitize_log_text("", color=True) == ""
+
+    def test_conceal_is_escaped_but_extended_colour_is_kept(self) -> None:
+        """SGR 8 hides text and is shown as text; a 256-colour index 8 is just grey."""
+        assert sanitize_log_text("\x1b[8mhidden\x1b[0m", color=True) == (
+            "\\x1b[8mhidden\x1b[0m\x1b[0m"
+        )
+        assert sanitize_log_text("\x1b[38;5;8mgrey\x1b[0m", color=True) == (
+            "\x1b[38;5;8mgrey\x1b[0m\x1b[0m"
+        )
+        assert sanitize_log_text("\x1b[1;8mhidden", color=False) == "hidden"
