@@ -20,11 +20,13 @@ from __future__ import annotations
 import re
 import unicodedata
 
-_SGR = re.compile(r"\x1b\[[0-9;:]*m")
+_SGR = re.compile(r"\x1b\[([0-9;:]*)m")
 """A complete Select Graphic Rendition sequence: colour and style, the
 one family of terminal controls that renders without side effects."""
 
 _SGR_RESET = "\x1b[0m"
+_SGR_CONCEAL = "8"
+_SGR_EXTENDED = frozenset({"38", "48", "58"})
 
 
 def sanitize_tty(s: str) -> str:
@@ -47,17 +49,49 @@ def sanitize_log_text(text: str, *, color: bool) -> str:
     otherwise (a file or a pipe), so a legitimate agent's colours reach
     the operator but never land in a log file as noise.  Kept colours are
     reset at the end of the text, so a task's styling cannot outlive its
-    own output.  Every other control character is hex-escaped exactly as
-    in [`sanitize_tty`][terok_util.security.sanitize_tty]: cursor
-    movement, screen erasure, OSC title or clipboard writes and bidi
-    overrides stay visible text.
+    own output, and SGR 8 (conceal) is not colour: it hides text, so it
+    is escaped like any other control.  Every other control character is
+    hex-escaped exactly as in
+    [`sanitize_tty`][terok_util.security.sanitize_tty]: cursor movement,
+    screen erasure, OSC title or clipboard writes and bidi overrides stay
+    visible text.
     """
     text = text.replace("\r\n", "\n")
-    escaped = [_escape(piece, multiline=True) for piece in _SGR.split(text)]
-    sequences = _SGR.findall(text)
-    if not color or not sequences:
-        return "".join(escaped)
-    return "".join(a + b for a, b in zip(escaped, [*sequences, _SGR_RESET], strict=True))
+    pieces: list[str] = []
+    kept = False
+    position = 0
+    for match in _SGR.finditer(text):
+        pieces.append(_escape(text[position : match.start()], multiline=True))
+        if color and _is_colour(match.group(1)):
+            pieces.append(match.group(0))
+            kept = True
+        elif color:
+            pieces.append(_escape(match.group(0), multiline=True))
+        position = match.end()
+    pieces.append(_escape(text[position:], multiline=True))
+    if kept:
+        pieces.append(_SGR_RESET)
+    return "".join(pieces)
+
+
+def _is_colour(parameters: str) -> bool:
+    """Whether an SGR parameter list only styles text, never conceals it.
+
+    An extended colour (``38;5;n``, ``48;2;r;g;b``) carries numbers of its
+    own, so its arguments are skipped rather than read as attributes.
+    """
+    tokens = re.split(r"[;:]", parameters)
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in _SGR_EXTENDED:
+            form = tokens[index + 1] if index + 1 < len(tokens) else ""
+            index += {"5": 3, "2": 5}.get(form, 1)
+        elif token.lstrip("0") == _SGR_CONCEAL:
+            return False
+        else:
+            index += 1
+    return True
 
 
 def _escape(s: str, *, multiline: bool) -> str:

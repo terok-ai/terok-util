@@ -107,3 +107,13 @@ class TestSanitizeLogText:
     def test_lone_carriage_return_and_empty_text(self) -> None:
         assert sanitize_log_text("10%\r20%", color=True) == "10% 20%"
         assert sanitize_log_text("", color=True) == ""
+
+    def test_conceal_is_escaped_but_extended_colour_is_kept(self) -> None:
+        """SGR 8 hides text and is shown as text; a 256-colour index 8 is just grey."""
+        assert sanitize_log_text("\x1b[8mhidden\x1b[0m", color=True) == (
+            "\\x1b[8mhidden\x1b[0m\x1b[0m"
+        )
+        assert sanitize_log_text("\x1b[38;5;8mgrey\x1b[0m", color=True) == (
+            "\x1b[38;5;8mgrey\x1b[0m\x1b[0m"
+        )
+        assert sanitize_log_text("\x1b[1;8mhidden", color=False) == "hidden"
