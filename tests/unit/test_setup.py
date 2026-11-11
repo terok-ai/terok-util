@@ -102,7 +102,9 @@ def test_downgrade_cannot_mutate_receipt(receipt: SetupReceipt, operation: str) 
     """Neither invalidation nor certification may replace newer setup."""
     receipt.write()
     before = receipt.path.read_bytes()
-    with pytest.raises(SetupDowngradeError, match="Downgrades are not supported"):
+    with pytest.raises(
+        SetupDowngradeError, match="Downgrade requires explicit setup authorization"
+    ):
         getattr(replace(receipt, version="0.3.9"), operation)()
     assert receipt.path.read_bytes() == before
 

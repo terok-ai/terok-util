@@ -13,6 +13,7 @@ import tempfile
 import threading
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -28,16 +29,54 @@ _SETUP_LOCK_NAME = "setup.lock"
 _SETUP_BUSY = "Another setup operation is already running. Retry after it finishes."
 _RECEIPT_COMPONENT = "receipt"
 _NOT_SET_UP = "not set up yet"
+_downgrade_permit: ContextVar[_DowngradePermit | None] = ContextVar(
+    "downgrade_permit", default=None
+)
+
+
+@dataclass
+class _DowngradePermit:
+    """Authorize one live setup scope in its owning process and thread."""
+
+    owner: tuple[int, int]
+    active: bool = True
 
 
 @contextmanager
-def setup_lock() -> Iterator[None]:
+def setup_lock(*, allow_downgrade: bool = False) -> Iterator[None]:
     """Serialize setup mutations across packages, processes, and threads.
 
     Hold this around preflight, artifact changes, and receipt writes. Nested
     calls in the owning thread share the lock; competing callers fail with
     [`SetupRequiredError`][terok_util.setup.SetupRequiredError].
+
+    Args:
+        allow_downgrade: Authorize setup to replace newer receipts in this
+            scope. Nested setup calls inherit permission. Readiness checks
+            still reject unrepaired setup; state compatibility is not guaranteed.
     """
+    with _hold_setup_lock():
+        owner = (os.getpid(), threading.get_ident())
+        permit = _DowngradePermit(owner) if allow_downgrade or _downgrade_allowed() else None
+        token = _downgrade_permit.set(permit)
+        try:
+            yield
+        finally:
+            if permit is not None:
+                permit.active = False
+            if os.getpid() == owner[0]:
+                _downgrade_permit.reset(token)
+
+
+def _downgrade_allowed() -> bool:
+    """Reject inherited permits after their scope ends or outside their owner."""
+    permit = _downgrade_permit.get()
+    return bool(permit and permit.active and permit.owner == (os.getpid(), threading.get_ident()))
+
+
+@contextmanager
+def _hold_setup_lock() -> Iterator[None]:
+    """Keep setup exclusion independent of the caller's downgrade policy."""
     global _setup_fd
     mutex, process = _setup_mutex, os.getpid()
     if not mutex.acquire(blocking=False):
@@ -73,6 +112,7 @@ def _reset_setup_lock_after_fork() -> None:
         os.close(_setup_fd)
     _setup_fd = None
     _setup_mutex = threading.RLock()
+    _downgrade_permit.set(None)
 
 
 os.register_at_fork(after_in_child=_reset_setup_lock_after_fork)
@@ -185,10 +225,18 @@ def setup_status(checks: Iterable[SetupCheck]) -> SetupStatus:
 
 
 def require_no_downgrade(checks: Iterable[SetupCheck]) -> None:
-    """Reject newer setup anywhere in the supplied dependency closure."""
+    """Reject newer setup unless the current setup scope explicitly permits it."""
+    if not _downgrade_allowed():
+        _reject_downgrades(checks)
+
+
+def _reject_downgrades(checks: Iterable[SetupCheck]) -> None:
+    """Reject newer setup without consulting mutation-only authorization."""
     downgrades = [check for check in checks if check.status == SetupStatus.DOWNGRADE]
     if downgrades:
-        raise SetupDowngradeError(_diagnostics(downgrades) + ". Downgrades are not supported.")
+        raise SetupDowngradeError(
+            _diagnostics(downgrades) + ". Downgrade requires explicit setup authorization."
+        )
 
 
 def require_setup(checks: Iterable[SetupCheck]) -> None:
@@ -200,7 +248,7 @@ def require_setup(checks: Iterable[SetupCheck]) -> None:
     that one fact, and the hint asks to run setup, not to run it *again*.
     """
     pending = [check for check in checks if check.status != SetupStatus.READY]
-    require_no_downgrade(pending)
+    _reject_downgrades(pending)
     if not pending:
         return
     unset = {
