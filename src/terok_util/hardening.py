@@ -48,7 +48,6 @@ sets, so ``confine_filesystem`` runs second.
 from __future__ import annotations
 
 import ctypes
-import ctypes.util
 import os
 import resource
 import stat
@@ -133,21 +132,16 @@ def harden_self(*, allow_debugger: bool = False) -> HardeningReport:
 
 
 def _libc() -> ctypes.CDLL | None:
-    """Return a handle on libc for the raw syscalls, or ``None`` if absent.
+    """Return the already-linked libc for raw syscalls, or ``None`` if unavailable.
 
-    ``find_library("c")`` frequently comes up empty on musl (Alpine),
-    where the glibc-specific ``libc.so.6`` name also won't load — so fall
-    through to ``ctypes.CDLL(None)``, the process's own already-linked
-    libc, which exposes ``prctl`` / ``mlockall`` on glibc and musl alike
-    without guessing an architecture-specific SONAME.  Returns ``None``
-    only if every candidate fails to load.
+    The process handle exposes libc on glibc and musl without library
+    discovery, which may spawn compilers and create temporary files that
+    a confined process cannot access.
     """
-    for name in (ctypes.util.find_library("c"), None):
-        try:
-            return ctypes.CDLL(name, use_errno=True)
-        except OSError:
-            continue
-    return None
+    try:
+        return ctypes.CDLL(None, use_errno=True)
+    except OSError:
+        return None
 
 
 def _clear_dumpable(libc: ctypes.CDLL | None) -> bool:
