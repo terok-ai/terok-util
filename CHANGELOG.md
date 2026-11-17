@@ -10,34 +10,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## v0.5.0 — A Man Alone
 
 ### Added
 
+- `setup_lock(allow_downgrade=True)`: a setup that the operator approves may replace
+  receipts written by a newer version. The permission belongs to one setup transaction:
+  nested installers inherit it, and it ends with the transaction, also after an error.
+  `require_setup` stays strict ([#190](https://github.com/terok-ai/terok-util/pull/190)).
+- `untrusted_fs`: bounded reads that follow no link, and writes that replace a file with
+  a fresh inode, for paths that a task can write. It refuses symlinks, hardlinks, special
+  files and oversized reads with `UnsafePathError`, and adds a safe unlink and a
+  cooperative file lock ([#176](https://github.com/terok-ai/terok-util/pull/176)).
+- `write_config_file()` writes operator-owned config in place, keeping symlinks, mode and
+  owner; a new file is created 0600 in 0700 directories. `ensure_dir_writable(...,
+  private=True)` creates the missing directories 0700 ([#161](https://github.com/terok-ai/terok-util/pull/161)).
+- `yaml.literal_block()` marks multi-line text to dump as a readable `|` block
+  (double-quoted when a block cannot carry it) ([#161](https://github.com/terok-ai/terok-util/pull/161)).
 - `writable_config_path()`: the one `config.yml` every package writes, derived once
-  from `config_file_paths()`.
+  from `config_file_paths()` ([#181](https://github.com/terok-ai/terok-util/pull/181)).
 - `sanitize_log_text()`: terminal-safe multiline task output that keeps line breaks,
-  tabs and, on an interactive terminal, SGR colour.
-
+  tabs and, on an interactive terminal, SGR colour ([#181](https://github.com/terok-ai/terok-util/pull/181)).
+- `podman_hosts_file_args()` returns `--hosts-file <base>`. On podman older than 5.4 it
+  returns no flags and prints one notice ([#175](https://github.com/terok-ai/terok-util/pull/175)).
 - `terok-matrix --report PATH`: atomic JSON progress and final results — slot verdicts,
   skip reasons, build failures, observed versions, suspected network failures — and a
   jobserver wait a caller can cancel without closing the shared worker budget
   ([#133](https://github.com/terok-ai/terok-util/pull/133)).
+- Python 3.15 is supported.
 
 ### Changed
 
 - `config_file_paths()` adds the installation-prefix layer (`sys.prefix/etc/terok/config.yml`)
-  between the system and user files and lists root's single writable file once, last.
-
+  between the system and user files and lists root's single writable file once, last
+  ([#181](https://github.com/terok-ai/terok-util/pull/181)).
 - `require_setup` reports an owner whose receipt is missing as `not set up yet`
   instead of listing every absent artifact, and asks to "Run setup" rather than
-  "Run setup again" when nothing was ever set up.
+  "Run setup again" when nothing was ever set up ([#150](https://github.com/terok-ai/terok-util/pull/150)).
+- A missing directory is created with the primary group of the account, not with a
+  transient `newgrp` group that rootless Podman may not map. Existing ownership, modes
+  and ACLs stay as they are, and writing a secret file no longer changes the mode of its
+  parent directories ([#172](https://github.com/terok-ai/terok-util/pull/172)).
 
 ### Fixed
 
 - A read or write path on an eCryptfs mount is reported as unconfined before Landlock
   is applied, so callers keep the other process hardening and surface the filesystem
   limitation instead of failing ([#137](https://github.com/terok-ai/terok-util/pull/137)).
+- Process hardening takes libc from the running process. Library discovery needed a
+  compiler and a writable temporary directory, which a confined process does not have
+  ([#190](https://github.com/terok-ai/terok-util/pull/190)).
+- `terok-matrix` keeps the scripts that the host generates read-only and apart from the
+  results that a slot writes, bounds what it reads back, and rejects links and
+  non-regular result files ([#174](https://github.com/terok-ai/terok-util/pull/174)).
+
+**Full Changelog**: https://github.com/terok-ai/terok-util/compare/v0.4.0...v0.5.0
 
 ## v0.4.0 — At Your Service
 
@@ -46,9 +73,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Host-tool lookup from the current PATH, with a standalone-copyable implementation.
 - Package-owned setup receipts, readiness results, and downgrade guards.
 - A shared lock serializes setup and uninstall across packages.
-- `yaml.literal_block` marks multi-line text to dump as a readable `|` block (double-quoted when a block cannot carry it).
-- `write_config_file` writes operator-owned config in place, keeping symlinks, mode and owner; a new file is created 0600 in 0700 directories.
-- `ensure_dir_writable(..., private=True)` creates the missing directories 0700.
 
 ## What's Changed
 * feat: shared setup receipts and host tool lookup by @sliwowitz in https://github.com/terok-ai/terok-util/pull/128
