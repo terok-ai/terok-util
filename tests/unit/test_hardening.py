@@ -13,6 +13,7 @@ checked in-process with the syscalls stubbed out.
 
 from __future__ import annotations
 
+import ctypes.util
 import errno
 import os
 import struct
@@ -118,10 +119,12 @@ def test_real_syscalls_take_effect() -> None:
     probe = textwrap.dedent(
         """
         import ctypes, ctypes.util, resource
+        from unittest.mock import patch
         from terok_util.hardening import harden_self
 
-        report = harden_self()
-        libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+        with patch("ctypes.util.find_library", side_effect=FileNotFoundError("No usable temporary directory")):
+            report = harden_self()
+        libc = ctypes.CDLL(None, use_errno=True)
         _PR_GET_DUMPABLE = 3
         _PR_GET_NO_NEW_PRIVS = 39
         dumpable = libc.prctl(_PR_GET_DUMPABLE, 0, 0, 0, 0)
@@ -145,11 +148,11 @@ def test_allow_debugger_keeps_process_dumpable() -> None:
     """Debug mode leaves the process dumpable, but no-new-privs still takes."""
     probe = textwrap.dedent(
         """
-        import ctypes, ctypes.util
+        import ctypes
         from terok_util.hardening import harden_self
 
         report = harden_self(allow_debugger=True)
-        libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+        libc = ctypes.CDLL(None, use_errno=True)
         _PR_GET_DUMPABLE = 3
         _PR_GET_NO_NEW_PRIVS = 39
         dumpable = libc.prctl(_PR_GET_DUMPABLE, 0, 0, 0, 0)
@@ -212,6 +215,18 @@ class TestHelpersInProcess:
     def test_libc_returns_a_usable_handle(self) -> None:
         handle = hardening._libc()
         assert handle is None or hasattr(handle, "prctl")
+
+    def test_libc_uses_process_handle_without_library_discovery(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Confined hardening needs no compiler probes or writable temporary directory."""
+        discover = MagicMock(side_effect=FileNotFoundError("No usable temporary directory"))
+        load = MagicMock(return_value=_FakeLibc())
+        monkeypatch.setattr(ctypes.util, "find_library", discover)
+        monkeypatch.setattr(hardening.ctypes, "CDLL", load)
+        assert hardening._libc() is load.return_value
+        discover.assert_not_called()
+        load.assert_called_once_with(None, use_errno=True)
 
     def test_libc_is_none_when_cdll_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(hardening.ctypes, "CDLL", MagicMock(side_effect=OSError))

@@ -58,6 +58,19 @@ the package that owns them. The `__all__` declaration in
 `src/terok_util/__init__.py` is the contract — symbols listed there
 are stable across minor releases.
 
+## Setup downgrade authorization
+
+`setup_lock(allow_downgrade=True)` lets an explicit operator-approved setup
+replace newer package receipts. Nested setup calls inherit permission until
+the scope exits. The permission does not survive a fork or authorize another
+thread. Receipt checks still report the actual version mismatch, and
+`require_setup()` still rejects unrepaired setup.
+
+The option permits installers to run; it does not establish that older code
+can read newer state. Callers must obtain explicit operator consent and warn
+about compatibility before entering the scope. Ordinary setup and runtime
+checks keep their downgrade guards.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
